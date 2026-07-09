@@ -32,6 +32,13 @@ export default function ConnectPage() {
   useEffect(() => setOrigin(window.location.origin), []);
   const { data: feat } = useSWR<{ mcpAuthRequired?: boolean; harness?: boolean }>("/api/features", fetcher);
 
+  const [tok, setTok] = useState("");
+  function generateToken() {
+    const a = new Uint8Array(32);
+    crypto.getRandomValues(a);
+    setTok(Array.from(a, (b) => b.toString(16).padStart(2, "0")).join(""));
+  }
+
   const mcp = origin ? `${origin}/api/mcp` : "…";
   const needsToken = feat?.mcpAuthRequired !== false;
   const tokenLine = needsToken ? ` \\\n  --header "Authorization: Bearer <MCP_TOKEN>"` : "";
@@ -50,6 +57,22 @@ export default function ConnectPage() {
         <section className="mt-8 space-y-2">
           <h2 className="text-sm font-medium">MCP endpoint</h2>
           <Copyable text={mcp} />
+        </section>
+
+        <section className="mt-6 space-y-2">
+          <h2 className="text-sm font-medium">Generate a token</h2>
+          <p className="text-sm text-muted-foreground">
+            A strong random value for <code className="rounded bg-muted px-1">MCP_TOKEN</code> or{" "}
+            <code className="rounded bg-muted px-1">AUTH_SECRET</code>. Set it as an env var on your host — the app
+            reads secrets from the environment, nothing is stored in the app.
+          </p>
+          <button
+            onClick={generateToken}
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
+          >
+            Generate
+          </button>
+          {tok && <Copyable text={tok} />}
         </section>
 
         <section className="mt-6 space-y-2">
