@@ -18,7 +18,7 @@ Think **Obsidian, but agent-native** — or **markdown RAG without a vector data
 vault of `.md` files (or the bundled `sample-vault/`) and every agent on your team can search, read,
 and write the same knowledge. Humans edit it in a fast dashboard; agents edit it over one MCP endpoint.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/OCboNZ?referralCode=PEidIe&utm_medium=integration&utm_source=template&utm_campaign=generic)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/engram?referralCode=PEidIe&utm_medium=integration&utm_source=template&utm_campaign=generic)
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/klyiro/engram)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](./LICENSE)
 
