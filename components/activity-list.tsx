@@ -16,92 +16,116 @@ interface CommitFile {
   status: string;
   path: string;
   oldPath?: string;
+  diff: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
 }
 interface CommitDetail {
+  hash: string;
+  message: string;
+  author: string;
+  date: string;
   files: CommitFile[];
-  diff: string;
   truncated: boolean;
 }
 type DetailState = CommitDetail | "loading" | "error" | undefined;
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
-  A: { label: "added", className: "text-emerald-500" },
-  M: { label: "modified", className: "text-amber-500" },
-  D: { label: "deleted", className: "text-destructive" },
-  R: { label: "renamed", className: "text-blue-400" },
-  C: { label: "copied", className: "text-blue-400" },
-  T: { label: "changed", className: "text-muted-foreground" },
+  A: { label: "added", className: "bg-emerald-500/15 text-emerald-500" },
+  M: { label: "modified", className: "bg-amber-500/15 text-amber-500" },
+  D: { label: "deleted", className: "bg-destructive/15 text-destructive" },
+  R: { label: "renamed", className: "bg-blue-500/15 text-blue-400" },
+  C: { label: "copied", className: "bg-blue-500/15 text-blue-400" },
+  T: { label: "changed", className: "bg-muted text-muted-foreground" },
 };
 
-/** One line of a unified diff, colored by its prefix. */
 function diffLineClass(line: string): string {
-  if (line.startsWith("diff --git") || line.startsWith("index ")) return "text-muted-foreground/60";
-  if (line.startsWith("@@")) return "text-blue-400";
-  if (line.startsWith("+++") || line.startsWith("---")) return "text-muted-foreground";
-  if (line.startsWith("+")) return "text-emerald-500";
-  if (line.startsWith("-")) return "text-destructive";
+  if (line.startsWith("@@")) return "text-blue-400 bg-blue-500/5";
+  if (line.startsWith("+")) return "text-emerald-500 bg-emerald-500/5";
+  if (line.startsWith("-")) return "text-destructive bg-destructive/5";
   return "text-muted-foreground";
+}
+
+/** Drop git metadata lines (diff --git / index / mode / ---/+++), keep hunks + content. */
+function hunkLines(diff: string): string[] {
+  return diff.split("\n").filter((l) => {
+    if (/^diff --git /.test(l)) return false;
+    if (/^index [0-9a-f]/.test(l)) return false;
+    if (/^(new|deleted) file mode /.test(l)) return false;
+    if (/^(old|new) mode /.test(l)) return false;
+    if (/^similarity index /.test(l)) return false;
+    if (/^(rename|copy) (from|to) /.test(l)) return false;
+    if (/^--- /.test(l)) return false;
+    if (/^\+\+\+ /.test(l)) return false;
+    return true;
+  });
 }
 
 function noteHref(f: CommitFile): string | null {
   return f.status !== "D" && f.path.toLowerCase().endsWith(".md") ? `/n/${f.path}` : null;
 }
 
-function CommitDetailView({ detail }: { detail: CommitDetail }) {
-  const [showDiff, setShowDiff] = useState(false);
+/** One file's diff card — status header + clean, colored hunks. */
+function FileDiff({ f }: { f: CommitFile }) {
+  const meta = STATUS_META[f.status] ?? STATUS_META.T;
+  const href = noteHref(f);
+  const lines = hunkLines(f.diff);
   return (
-    <div className="mt-2 space-y-2 border-l border-border pl-3">
-      <ul className="space-y-1">
-        {detail.files.length === 0 && <li className="text-xs text-muted-foreground">No file changes.</li>}
-        {detail.files.map((f, i) => {
-          const meta = STATUS_META[f.status] ?? STATUS_META.T;
-          const href = noteHref(f);
-          return (
-            <li key={`${f.path}-${i}`} className="flex items-center gap-2 text-xs">
-              <span className={`w-4 shrink-0 text-center font-mono font-semibold ${meta.className}`} title={meta.label}>
-                {f.status}
-              </span>
-              {href ? (
-                <Link href={href} className="inline-flex items-center gap-1 truncate text-foreground hover:underline">
-                  <FileText size={12} className="shrink-0 text-muted-foreground" />
-                  {f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
-                </Link>
-              ) : (
-                <span className="inline-flex items-center gap-1 truncate text-muted-foreground">
-                  <FileText size={12} className="shrink-0" />
-                  {f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}
-                </span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-
-      {detail.diff.trim() && (
-        <div>
-          <button onClick={() => setShowDiff((v) => !v)} className="text-xs text-muted-foreground transition-colors hover:text-foreground">
-            {showDiff ? "Hide diff" : "Show diff"}
-          </button>
-          {showDiff && (
-            <div className="mt-1.5 overflow-x-auto rounded-md border border-border bg-muted/30">
-              <pre className="w-max min-w-full p-3 font-mono text-[11px] leading-relaxed">
-                {detail.diff.split("\n").map((line, i) => (
-                  <div key={i} className={diffLineClass(line)}>
-                    {line || " "}
-                  </div>
-                ))}
-              </pre>
-              {detail.truncated && <p className="border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">Diff truncated — open the note to see the full content.</p>}
-            </div>
+    <div className="overflow-hidden rounded-lg border border-border">
+      <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-3 py-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${meta.className}`} title={meta.label}>
+            {meta.label}
+          </span>
+          <span className="truncate font-mono text-xs">{f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}</span>
+        </div>
+        <div className="flex shrink-0 items-center gap-3 text-xs">
+          {(f.additions > 0 || f.deletions > 0) && (
+            <span className="whitespace-nowrap">
+              <span className="text-emerald-500">+{f.additions}</span> <span className="text-destructive">−{f.deletions}</span>
+            </span>
           )}
+          {href && (
+            <Link href={href} className="inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground">
+              <FileText size={12} /> Open
+            </Link>
+          )}
+        </div>
+      </div>
+      {f.binary ? (
+        <p className="px-3 py-2.5 text-xs text-muted-foreground">Binary file — not shown.</p>
+      ) : lines.length === 0 ? (
+        <p className="px-3 py-2.5 text-xs text-muted-foreground">No textual changes.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <pre className="w-max min-w-full py-2 font-mono text-[11.5px] leading-relaxed">
+            {lines.map((line, j) => (
+              <div key={j} className={`px-3 ${diffLineClass(line)}`}>
+                {line || " "}
+              </div>
+            ))}
+          </pre>
         </div>
       )}
     </div>
   );
 }
 
+function CommitFiles({ detail }: { detail: CommitDetail }) {
+  if (detail.files.length === 0) return <p className="text-xs text-muted-foreground">No file changes.</p>;
+  return (
+    <div className="space-y-3">
+      {detail.files.map((f, i) => (
+        <FileDiff key={`${f.path}-${i}`} f={f} />
+      ))}
+      {detail.truncated && <p className="text-[11px] text-muted-foreground">Diff truncated — open the notes to see full content.</p>}
+    </div>
+  );
+}
+
 /** A commit feed for the vault — shared by the home preview and the full Activity page.
- *  Each entry expands to show the files it changed (linking to the note) plus the raw diff. */
+ *  Each row toggles an inline, per-file diff view (default collapsed, lazy-loaded on first open). */
 export function ActivityList({ entries, empty }: { entries: ActivityEntry[]; empty?: string }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Record<string, DetailState>>({});
@@ -142,23 +166,23 @@ export function ActivityList({ entries, empty }: { entries: ActivityEntry[]; emp
         const detail = details[e.hash];
         return (
           <li key={`${e.hash}-${i}`} className="py-2.5">
-            <button onClick={() => toggle(e.hash)} className="flex w-full items-start gap-3 text-left">
+            <button onClick={() => toggle(e.hash)} className="group flex w-full items-start gap-3 text-left">
               <span className="mt-0.5 shrink-0 text-muted-foreground">
-                <GitCommit size={15} className={isOpen ? "hidden" : ""} />
-                <ChevronRight size={15} className={`${isOpen ? "rotate-90" : "hidden"} transition-transform`} />
+                <GitCommit size={15} className={isOpen ? "hidden" : "block"} />
+                <ChevronRight size={15} className={isOpen ? "block rotate-90 transition-transform" : "hidden"} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm">{e.message}</span>
+                <span className="block truncate text-sm group-hover:text-foreground">{e.message}</span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
                   {e.author} · <span className="font-mono">{e.hash}</span> · {timeAgo(e.date)}
                 </span>
               </span>
             </button>
             {isOpen && (
-              <div className="ml-[27px]">
-                {detail === "loading" && <p className="mt-2 text-xs text-muted-foreground">Loading changes…</p>}
-                {detail === "error" && <p className="mt-2 text-xs text-destructive">Couldn&apos;t load this commit&apos;s changes.</p>}
-                {detail && detail !== "loading" && detail !== "error" && <CommitDetailView detail={detail} />}
+              <div className="mt-2.5 ml-[27px]">
+                {detail === "loading" && <p className="text-xs text-muted-foreground">Loading changes…</p>}
+                {detail === "error" && <p className="text-xs text-destructive">Couldn&apos;t load this commit&apos;s changes.</p>}
+                {detail && detail !== "loading" && detail !== "error" && <CommitFiles detail={detail} />}
               </div>
             )}
           </li>

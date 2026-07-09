@@ -150,11 +150,24 @@ export interface CommitFile {
   path: string;
   /** Previous path, for renames/copies. */
   oldPath?: string;
+  /** The per-file patch body (starts with `diff --git`). Empty if none/binary. */
+  diff: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+export interface CommitDetail {
+  hash: string;
+  message: string;
+  author: string;
+  date: string;
+  files: CommitFile[];
+  truncated: boolean;
 }
 
-const MAX_DIFF = 60_000; // cap the patch we ship to the client
+const MAX_DIFF = 200_000; // cap the total patch we ship to the client
 
-function parseNameStatus(raw: string): CommitFile[] {
+function parseNameStatus(raw: string): { status: string; path: string; oldPath?: string }[] {
   return raw
     .split("\n")
     .map((l) => l.trim())
@@ -169,21 +182,59 @@ function parseNameStatus(raw: string): CommitFile[] {
     });
 }
 
+/** Path a per-file diff block targets (new path for renames, original for deletes). */
+function diffBlockPath(chunk: string): string | null {
+  const plus = chunk.match(/^\+\+\+ b\/(.+)$/m);
+  if (plus && plus[1] !== "/dev/null") return plus[1];
+  const minus = chunk.match(/^--- a\/(.+)$/m);
+  if (minus && minus[1] !== "/dev/null") return minus[1];
+  const git = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m);
+  return git ? git[2] : null;
+}
+
+/** Split a raw `git show` patch into per-file blocks keyed by path. */
+function splitDiffByFile(diff: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const idx = diff.indexOf("diff --git ");
+  if (idx === -1) return map;
+  const parts = diff.slice(idx).split(/\ndiff --git /);
+  parts.forEach((p, i) => {
+    const chunk = (i === 0 ? p : "diff --git " + p).trimEnd();
+    const path = diffBlockPath(chunk);
+    if (path) map.set(path, chunk);
+  });
+  return map;
+}
+
 /**
- * What a single commit changed: the list of touched files (with status) plus the raw patch.
- * Guarded like the rest — only the active vault, only a valid hash. Null if unavailable.
+ * What a single commit changed: metadata + each touched file with its own patch, add/del counts,
+ * and status. Guarded like the rest — only the active vault, only a valid hash. Null if unavailable.
  */
-export async function commitChanges(hash: string): Promise<{ files: CommitFile[]; diff: string; truncated: boolean } | null> {
+export async function commitChanges(hash: string): Promise<CommitDetail | null> {
   const dir = gitVaultDir();
   if (!dir) return null;
   if (!/^[0-9a-f]{4,40}$/i.test(hash)) return null; // avoid passing arbitrary args to git
   try {
     const g = simpleGit(dir);
+    const meta = await g.raw(["show", "-s", "--no-color", "--format=%h%x1f%an%x1f%aI%x1f%s", hash]);
+    const [shortHash, author, date, message] = meta.trim().split("\x1f");
     const nameStatus = await g.raw(["show", "--no-color", "--format=", "--name-status", hash]);
-    const files = parseNameStatus(nameStatus);
     const rawDiff = await g.raw(["show", "--no-color", "--format=", "--patch", hash]);
     const truncated = rawDiff.length > MAX_DIFF;
-    return { files, diff: truncated ? rawDiff.slice(0, MAX_DIFF) : rawDiff, truncated };
+    const blocks = splitDiffByFile(truncated ? rawDiff.slice(0, MAX_DIFF) : rawDiff);
+
+    const files: CommitFile[] = parseNameStatus(nameStatus).map((f) => {
+      const body = blocks.get(f.path) ?? "";
+      return {
+        ...f,
+        diff: body,
+        additions: (body.match(/^\+(?!\+\+)/gm) || []).length,
+        deletions: (body.match(/^-(?!--)/gm) || []).length,
+        binary: /^Binary files /m.test(body),
+      };
+    });
+
+    return { hash: shortHash || hash.slice(0, 7), message: message ?? "", author: author ?? "", date: date ?? "", files, truncated };
   } catch {
     return null;
   }
