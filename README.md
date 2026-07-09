@@ -6,6 +6,12 @@
 
 <p align="center"><b>The second brain your AI agents read and write.</b></p>
 
+<p align="center">
+  <video src="https://github.com/rwnalds/engram/raw/main/assets/demo.mp4" controls width="820"></video>
+</p>
+
+<p align="center"><sub><a href="https://github.com/rwnalds/engram/raw/main/assets/demo.mp4">▶ Watch the demo</a> if the video doesn't play inline.</sub></p>
+
 ---
 
 Engram is a self-hosted **MCP server + dashboard** that gives Claude Code, Cursor, Hermes, and any
