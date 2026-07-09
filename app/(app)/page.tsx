@@ -3,7 +3,7 @@
 import Link from "next/link";
 import useSWR, { useSWRConfig } from "swr";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Brain, Check, GitBranch, Plug, Search } from "lucide-react";
+import { ArrowRight, Brain, Check, GitBranch, Plug, Search, Settings as SettingsIcon } from "lucide-react";
 import { fetcher, folderColor } from "@/lib/client";
 import { CuratorChat } from "@/components/curator-chat";
 import { ActivityList, type ActivityEntry } from "@/components/activity-list";
@@ -17,14 +17,6 @@ interface Repo {
   name: string;
   fullName?: string;
   active: boolean;
-}
-interface Sync {
-  enabled: boolean;
-  branch?: string;
-  ahead?: number;
-  behind?: number;
-  dirty?: number;
-  error?: boolean;
 }
 interface Settings {
   gitSyncEnabled: boolean;
@@ -100,7 +92,6 @@ function TogglePillar(props: { icon: React.ReactNode; title: string; desc: strin
 export default function Home() {
   const { mutate } = useSWRConfig();
   const { data: repos } = useSWR<{ repos: Repo[]; active: Repo | null }>("/api/repos", fetcher);
-  const { data: sync } = useSWR<Sync>("/api/sync", fetcher, { refreshInterval: 10000 });
   const { data: feat } = useSWR<{ harness?: boolean; mcpAuthRequired?: boolean; appName?: string }>("/api/features", fetcher);
   const { data: tok } = useSWR<{ tokens: { id: string }[] }>("/api/tokens", fetcher);
   const { data: settings } = useSWR<Settings>("/api/settings", fetcher);
@@ -161,14 +152,11 @@ export default function Home() {
     patch({ harnessEnabled: v }, "/api/settings", "/api/features");
   }
 
-  // Curator on → the home is a chat window over your brain.
-  if (feat?.harness) return <CuratorChat />;
-
   const recent = activity?.activity ?? [];
+  const curatorNeedsKey = curatorOn && !settings?.anthropicApiKeySet;
 
-  // ── No vault connected → focused onboarding (the one time setup belongs front-and-center). ──
-  if (!active) {
-    const curatorNeedsKey = curatorOn && !settings?.anthropicApiKeySet;
+  // ── Nothing set up yet (no vault, Curator off) → focused onboarding. ──
+  if (!active && !feat?.harness) {
     return (
       <div className="scrollbar-none h-full overflow-y-auto">
         <div className="mx-auto flex min-h-full max-w-2xl flex-col px-8 py-12">
@@ -205,7 +193,7 @@ export default function Home() {
                 icon={<Brain size={16} />}
                 title="Curator"
                 ok={false}
-                state={curatorNeedsKey ? "needs API key" : curatorOn ? "on" : "off · optional"}
+                state={curatorNeedsKey ? "needs API key" : "off · optional"}
                 desc="An optional chat agent that reads your notes to answer. Turn it on anytime."
                 on={curatorOn}
                 onToggle={toggleCurator}
@@ -228,91 +216,88 @@ export default function Home() {
     );
   }
 
-  // ── Vault connected → the "brain home": search-first, with recents + activity. ──
-  const gitDetail = sync?.error
-    ? "sync error"
-    : sync?.ahead || sync?.behind || sync?.dirty
-      ? `${sync?.dirty || 0} local · ↑${sync?.ahead || 0} ↓${sync?.behind || 0}`
-      : "synced";
-
+  // ── Set up → a persistent toolbar (git sync + Curator, always here) over the mode content. ──
   return (
-    <div className="scrollbar-none h-full overflow-y-auto">
-      <div className="mx-auto max-w-2xl px-8 py-12">
-        <div className="flex items-baseline justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="size-2 rounded-full bg-primary" />
-            <h1 className="text-lg font-semibold tracking-tight">{appName}</h1>
-          </div>
-          {stats && (
-            <p className="text-xs text-muted-foreground">
-              {stats.notes} notes · {stats.folders} folders · {stats.links} links
-            </p>
-          )}
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border px-6 py-2.5">
+        <div className="flex items-center gap-2">
+          <div className="size-2 rounded-full bg-primary" />
+          <span className="text-sm font-medium">{appName}</span>
         </div>
-
-        <div className="relative mt-6">
-          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search your brain…"
-            className="h-11 pl-9 text-sm"
-            aria-label="Search your brain"
-          />
-        </div>
-
-        {q.trim() ? (
-          <div className="mt-3 overflow-hidden rounded-lg border border-border">
-            {results.length === 0 ? (
-              <p className="px-3 py-3 text-sm text-muted-foreground">{searching ? "Searching…" : "No matches."}</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {results.slice(0, 10).map((r) => (
-                  <li key={r.path}>
-                    <Link href={`/n/${r.path}`} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-accent/60">
-                      <span className="size-1.5 shrink-0 rounded-full" style={{ background: folderColor(r.folder) }} />
-                      <span className="truncate text-sm">{r.title}</span>
-                      <span className="ml-auto max-w-[45%] shrink-0 truncate font-mono text-xs text-muted-foreground">{r.path}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
+        {stats && (
+          <span className="hidden text-xs text-muted-foreground sm:inline">
+            {stats.notes} notes · {stats.folders} folders · {stats.links} links
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5" title="Auto commit + push the vault to its remote">
+            <Switch size="sm" checked={gitSyncOn} onCheckedChange={toggleGitSync} aria-label="Git sync" />
+            <span>Git sync</span>
           </div>
+          <div className="flex items-center gap-1.5" title="In-app chat agent grounded in your notes">
+            <Switch size="sm" checked={curatorOn} onCheckedChange={toggleCurator} aria-label="Curator" />
+            <span>Curator{curatorNeedsKey && <span className="text-amber-500"> · needs key</span>}</span>
+          </div>
+          <Link href="/settings" className="inline-flex items-center gap-1 transition-colors hover:text-foreground">
+            <SettingsIcon size={13} /> Settings
+          </Link>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1">
+        {feat?.harness ? (
+          <CuratorChat />
         ) : (
-          <div className="mt-8 space-y-8">
-            <RecentNotes heading="Jump back in" />
-            {recent.length > 0 && (
-              <section>
-                <div className="mb-1 flex items-center justify-between">
-                  <h2 className="text-sm font-medium">Recent activity</h2>
-                  <Link href="/activity" className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                    View all <ArrowRight size={12} />
-                  </Link>
+          <div className="scrollbar-none h-full overflow-y-auto">
+            <div className="mx-auto max-w-2xl px-8 py-10">
+              <div className="relative">
+                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search your brain…"
+                  className="h-11 pl-9 text-sm"
+                  aria-label="Search your brain"
+                />
+              </div>
+
+              {q.trim() ? (
+                <div className="mt-3 overflow-hidden rounded-lg border border-border">
+                  {results.length === 0 ? (
+                    <p className="px-3 py-3 text-sm text-muted-foreground">{searching ? "Searching…" : "No matches."}</p>
+                  ) : (
+                    <ul className="divide-y divide-border">
+                      {results.slice(0, 10).map((r) => (
+                        <li key={r.path}>
+                          <Link href={`/n/${r.path}`} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-accent/60">
+                            <span className="size-1.5 shrink-0 rounded-full" style={{ background: folderColor(r.folder) }} />
+                            <span className="truncate text-sm">{r.title}</span>
+                            <span className="ml-auto max-w-[45%] shrink-0 truncate font-mono text-xs text-muted-foreground">{r.path}</span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
-                <ActivityList entries={recent} />
-              </section>
-            )}
+              ) : (
+                <div className="mt-8 space-y-8">
+                  <RecentNotes heading="Jump back in" />
+                  {recent.length > 0 && (
+                    <section>
+                      <div className="mb-1 flex items-center justify-between">
+                        <h2 className="text-sm font-medium">Recent activity</h2>
+                        <Link href="/activity" className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                          View all <ArrowRight size={12} />
+                        </Link>
+                      </div>
+                      <ActivityList entries={recent} />
+                    </section>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
-
-        {/* Neutral controls — settings, not a checklist. */}
-        <div className="mt-10 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border pt-4 text-xs text-muted-foreground">
-          <label className="flex items-center gap-2">
-            <Switch checked={gitSyncOn} onCheckedChange={toggleGitSync} />
-            <span>Git sync {gitSyncOn ? <span className="text-muted-foreground/70">· {gitDetail}</span> : null}</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <Switch checked={curatorOn} onCheckedChange={toggleCurator} />
-            <span>Curator {curatorOn && !settings?.anthropicApiKeySet ? <span className="text-amber-500/80">· needs key</span> : null}</span>
-          </label>
-          <Link href="/connect" className="inline-flex items-center gap-1 transition-colors hover:text-foreground">
-            <Plug size={12} /> {tokenCount > 0 ? `${tokenCount} agent${tokenCount === 1 ? "" : "s"}` : "Connect an agent"}
-          </Link>
-          <Link href="/settings" className="inline-flex items-center gap-1 transition-colors hover:text-foreground">
-            Settings
-          </Link>
-        </div>
       </div>
     </div>
   );
