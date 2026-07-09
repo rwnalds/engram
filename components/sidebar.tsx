@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Search, Network, FilePlus } from "lucide-react";
 import { fetcher, type TreeNode } from "@/lib/client";
 import { Tree } from "./tree";
+import { ThemeToggle } from "./theme-toggle";
 
 const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || "Cortex";
 
@@ -95,6 +96,9 @@ export function Sidebar() {
           <div className="px-3 py-2 text-xs text-muted-foreground">Loading…</div>
         )}
       </nav>
+      <div className="flex items-center justify-end border-t border-border px-2 py-1.5">
+        <ThemeToggle />
+      </div>
     </aside>
   );
 }
