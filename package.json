@@ -34,6 +34,7 @@
     "gen:secrets": "tsx scripts/gen-secrets.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "@base-ui/react": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.13.0",
     "chokidar": "^5.0.0",

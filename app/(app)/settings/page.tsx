@@ -169,9 +169,10 @@ export default function SettingsPage() {
         <section className="mt-6 space-y-4 border-t border-border pt-6">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-medium">AI capture (brain_capture)</h2>
+              <h2 className="text-sm font-medium">Curator</h2>
               <p className="text-xs text-muted-foreground">
-                Server-side auto-filing of rough dumps. Off by default — costs Anthropic tokens.
+                The in-app chat agent that reads your notes to answer, plus auto-filing of rough dumps
+                (brain_capture). Off by default — runs on your Anthropic key.
               </p>
             </div>
             <Toggle on={harness} onChange={setHarness} />

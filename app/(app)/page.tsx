@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowRight, Check, GitBranch, Plug, Zap } from "lucide-react";
+import { ArrowRight, Brain, Check, GitBranch, Plug } from "lucide-react";
 import { fetcher } from "@/lib/client";
+import { CuratorChat } from "@/components/curator-chat";
 
 interface Repo {
   id: string;
@@ -89,6 +90,9 @@ export default function Home() {
           ? `${sync?.dirty || 0} local · ↑${sync?.ahead || 0} ↓${sync?.behind || 0}`
           : "synced";
 
+  // Curator on → the home is a chat window over your brain.
+  if (feat?.harness) return <CuratorChat />;
+
   return (
     <div className="scrollbar-none h-full overflow-y-auto">
       <div className="mx-auto flex min-h-full max-w-2xl flex-col justify-center gap-6 px-8 py-12">
@@ -122,11 +126,11 @@ export default function Home() {
             cta={tokenCount > 0 ? "Manage" : "Connect an agent"}
           />
           <Pillar
-            icon={<Zap size={16} />}
-            title="AI capture"
+            icon={<Brain size={16} />}
+            title="Curator"
             ok={!!feat?.harness}
             state={feat?.harness ? "on" : "off"}
-            desc="Dump a rough note and the brain files it into the right place, with clean frontmatter."
+            desc="A chat agent that reads your notes to answer, and files rough dumps into the right place. Runs on your Anthropic key."
             href="/settings"
             cta={feat?.harness ? "Configure" : "Enable"}
           />
