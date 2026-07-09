@@ -1,4 +1,5 @@
 import { HARNESS_ENABLED, MCP_TOKEN } from "@/lib/config";
+import { hasAnyToken, verifyToken } from "@/lib/tokens";
 import { TOOLS, TOOL_MAP } from "@/lib/mcp/tools";
 
 export const dynamic = "force-dynamic";
@@ -59,10 +60,12 @@ function jsonResponse(body: Json, status = 200) {
 }
 
 export async function POST(req: Request) {
-  // Enforce the bearer only when a token is configured (open locally when unset).
+  // Enforce the bearer only when auth is configured (env MCP_TOKEN or any team token).
+  // Open locally when nothing is set.
   const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
-  if (MCP_TOKEN && token !== MCP_TOKEN) {
-    return jsonResponse(rpc(null, undefined, { code: -32001, message: "unauthorized" }), 401);
+  if (MCP_TOKEN !== "" || hasAnyToken()) {
+    const ok = (MCP_TOKEN !== "" && token === MCP_TOKEN) || verifyToken(token);
+    if (!ok) return jsonResponse(rpc(null, undefined, { code: -32001, message: "unauthorized" }), 401);
   }
 
   let body: Json;

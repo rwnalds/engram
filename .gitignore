@@ -11,3 +11,7 @@ next-env.d.ts
 .DS_Store
 .vercel
 .gstack/
+# local app state (token hashes) — never commit
+.cortex/
+**/.cortex/
+sample-vault/.gitignore
