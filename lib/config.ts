@@ -33,6 +33,15 @@ export const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS ?? "")
 /** Single-user / local mode: no Google auth, MCP open. For OSS local dev only. */
 export const AUTH_DISABLED = process.env.AUTH_DISABLED === "true";
 
+/** Session-cookie signing secret. When empty, dashboard auth is OFF (local dev). */
+export const AUTH_SECRET = process.env.AUTH_SECRET ?? "";
+/** Public base URL (for the Google OAuth redirect_uri). */
+export const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
+export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
+
+export const SESSION_COOKIE = "cortex_session";
+
 /** When true, the git-sync loop commits + pushes vault changes to the remote. */
 export const GIT_SYNC_ENABLED = process.env.GIT_SYNC_ENABLED === "true";
 

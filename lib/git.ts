@@ -1,5 +1,30 @@
+import fs from "node:fs";
+import path from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { VAULT_DIR, GIT_SYNC_ENABLED } from "@/lib/config";
+
+/**
+ * On boot: if GIT_SYNC is on and VAULT_DIR isn't yet a git repo, clone GIT_REMOTE
+ * into it. This is how the deployed app populates its volume from the remote vault
+ * repo — so no machine keeps a local copy, the server just checks one out.
+ */
+export async function ensureVaultRepo(): Promise<void> {
+  if (!GIT_SYNC_ENABLED) return;
+  const remote = process.env.GIT_REMOTE;
+  if (!remote) return;
+  if (fs.existsSync(path.join(VAULT_DIR, ".git"))) return;
+  const token = process.env.GIT_TOKEN;
+  const url = token && remote.startsWith("https://")
+    ? remote.replace("https://", `https://x-access-token:${token}@`)
+    : remote;
+  try {
+    fs.mkdirSync(VAULT_DIR, { recursive: true });
+    await simpleGit().clone(url, VAULT_DIR);
+    console.log(`[git] cloned vault repo into ${VAULT_DIR}`);
+  } catch (e) {
+    console.error("[git] vault clone failed", e);
+  }
+}
 
 let git: SimpleGit | null = null;
 function getGit(): SimpleGit {
