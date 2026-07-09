@@ -17,7 +17,7 @@ export default function ActivityPage() {
         <p className="mt-2 text-sm text-muted-foreground">
           What agents and teammates have done to your brain, straight from the vault&apos;s git history.
         </p>
-        <div className="mt-8">
+        <div className="mt-8" data-arrow-nav>
           {isLoading && !data ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : (

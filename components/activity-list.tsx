@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { ChevronRight, FileText, GitCommit } from "lucide-react";
 import { timeAgo } from "@/lib/utils";
+import { navItemClass } from "@/lib/use-arrow-nav";
 
 export interface ActivityEntry {
   hash: string;
@@ -166,7 +167,7 @@ export function ActivityList({ entries, empty }: { entries: ActivityEntry[]; emp
         const detail = details[e.hash];
         return (
           <li key={`${e.hash}-${i}`} className="py-2.5">
-            <button onClick={() => toggle(e.hash)} className="group flex w-full items-start gap-3 text-left">
+            <button onClick={() => toggle(e.hash)} data-nav-item className={`group flex w-full items-start gap-3 rounded-md text-left ${navItemClass}`}>
               <span className="mt-0.5 shrink-0 text-muted-foreground">
                 <GitCommit size={15} className={isOpen ? "hidden" : "block"} />
                 <ChevronRight size={15} className={isOpen ? "block rotate-90 transition-transform" : "hidden"} />

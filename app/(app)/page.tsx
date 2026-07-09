@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import useSWR, { useSWRConfig } from "swr";
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Brain, Check, GitBranch, Plug, Search, Settings as SettingsIcon } from "lucide-react";
 import { fetcher, folderColor } from "@/lib/client";
+import { navItemClass } from "@/lib/use-arrow-nav";
 import { CuratorChat } from "@/components/curator-chat";
 import { ActivityList, type ActivityEntry } from "@/components/activity-list";
 import { RecentNotes } from "@/components/recent-notes";
@@ -90,6 +92,7 @@ function TogglePillar(props: { icon: React.ReactNode; title: string; desc: strin
 }
 
 export default function Home() {
+  const router = useRouter();
   const { mutate } = useSWRConfig();
   const { data: repos } = useSWR<{ repos: Repo[]; active: Repo | null }>("/api/repos", fetcher);
   const { data: feat } = useSWR<{ harness?: boolean; mcpAuthRequired?: boolean; appName?: string }>("/api/features", fetcher);
@@ -116,6 +119,22 @@ export default function Home() {
   const [results, setResults] = useState<Hit[]>([]);
   const [searching, setSearching] = useState(false);
   const searchSeq = useRef(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // "/" focuses the home search (when not already typing somewhere).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const a = document.activeElement as HTMLElement | null;
+      if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+      if (searchRef.current) {
+        e.preventDefault();
+        searchRef.current.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => {
     const query = q.trim();
     if (!query) {
@@ -249,12 +268,20 @@ export default function Home() {
           <CuratorChat />
         ) : (
           <div className="scrollbar-none h-full overflow-y-auto">
-            <div className="mx-auto max-w-2xl px-8 py-10">
+            <div data-arrow-nav className="mx-auto max-w-2xl px-8 py-10">
               <div className="relative">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
+                  ref={searchRef}
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && results.length > 0) {
+                      e.preventDefault();
+                      router.push(`/n/${results[0].path}`);
+                    }
+                  }}
+                  data-nav-item
                   placeholder="Search your brain…"
                   className="h-11 pl-9 text-sm"
                   aria-label="Search your brain"
@@ -269,7 +296,7 @@ export default function Home() {
                     <ul className="divide-y divide-border">
                       {results.slice(0, 10).map((r) => (
                         <li key={r.path}>
-                          <Link href={`/n/${r.path}`} className="flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-accent/60">
+                          <Link href={`/n/${r.path}`} data-nav-item className={`flex items-center gap-2.5 px-3 py-2 transition-colors hover:bg-accent/60 ${navItemClass}`}>
                             <span className="size-1.5 shrink-0 rounded-full" style={{ background: folderColor(r.folder) }} />
                             <span className="truncate text-sm">{r.title}</span>
                             <span className="ml-auto max-w-[45%] shrink-0 truncate font-mono text-xs text-muted-foreground">{r.path}</span>
@@ -293,6 +320,12 @@ export default function Home() {
                       <ActivityList entries={recent} />
                     </section>
                   )}
+                  <p className="text-center text-[11px] text-muted-foreground/70">
+                    <kbd className="rounded border border-border px-1 font-mono">/</kbd> search ·{" "}
+                    <kbd className="rounded border border-border px-1 font-mono">↑</kbd>
+                    <kbd className="rounded border border-border px-1 font-mono">↓</kbd> navigate ·{" "}
+                    <kbd className="rounded border border-border px-1 font-mono">↵</kbd> open
+                  </p>
                 </div>
               )}
             </div>
