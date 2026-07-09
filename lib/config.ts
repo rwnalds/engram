@@ -45,6 +45,13 @@ export const SESSION_COOKIE = "cortex_session";
 /** When true, the git-sync loop commits + pushes vault changes to the remote. */
 export const GIT_SYNC_ENABLED = process.env.GIT_SYNC_ENABLED === "true";
 
-/** Anthropic key for the brain_capture harness (rough dump -> filed note). Optional. */
+/** Anthropic key for the brain_capture harness (rough dump -> filed note). */
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
 export const CAPTURE_MODEL = process.env.CAPTURE_MODEL ?? "claude-haiku-4-5-20251001";
+
+/**
+ * Server-side auto-filing harness (brain_capture). OFF by default: a capable coding
+ * agent can do the filing itself over the plain MCP tools with no extra server tokens.
+ * Turn on only if you want the vault to file rough dumps on its own.
+ */
+export const HARNESS_ENABLED = process.env.HARNESS_ENABLED === "true" && ANTHROPIC_API_KEY !== "";

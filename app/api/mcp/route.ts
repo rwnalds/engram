@@ -1,4 +1,4 @@
-import { AUTH_DISABLED, MCP_TOKEN } from "@/lib/config";
+import { HARNESS_ENABLED, MCP_TOKEN } from "@/lib/config";
 import { TOOLS, TOOL_MAP } from "@/lib/mcp/tools";
 
 export const dynamic = "force-dynamic";
@@ -31,10 +31,13 @@ async function handleMessage(msg: Json): Promise<Json | null> {
       });
     case "ping":
       return rpc(id, {});
-    case "tools/list":
+    case "tools/list": {
+      // Hide the auto-filing harness unless it's turned on (agents file notes themselves).
+      const tools = TOOLS.filter((t) => t.name !== "brain_capture" || HARNESS_ENABLED);
       return rpc(id, {
-        tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+        tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       });
+    }
     case "tools/call": {
       const tool = TOOL_MAP.get(params?.name);
       if (!tool) return rpc(id, undefined, { code: -32602, message: `unknown tool: ${params?.name}` });
@@ -56,8 +59,9 @@ function jsonResponse(body: Json, status = 200) {
 }
 
 export async function POST(req: Request) {
+  // Enforce the bearer only when a token is configured (open locally when unset).
   const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
-  if (!AUTH_DISABLED && (!MCP_TOKEN || token !== MCP_TOKEN)) {
+  if (MCP_TOKEN && token !== MCP_TOKEN) {
     return jsonResponse(rpc(null, undefined, { code: -32001, message: "unauthorized" }), 401);
   }
 

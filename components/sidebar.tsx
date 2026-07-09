@@ -4,7 +4,7 @@ import useSWR, { useSWRConfig } from "swr";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { Search, Network, FilePlus, Zap } from "lucide-react";
+import { Search, Network, FilePlus, Zap, Plug } from "lucide-react";
 import { fetcher, type TreeNode } from "@/lib/client";
 import { Tree } from "./tree";
 import { ThemeToggle } from "./theme-toggle";
@@ -13,6 +13,7 @@ const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || "Cortex";
 
 export function Sidebar() {
   const { data } = useSWR<{ tree: TreeNode }>("/api/tree", fetcher, { refreshInterval: 5000 });
+  const { data: feat } = useSWR<{ harness?: boolean }>("/api/features", fetcher);
   const { mutate } = useSWRConfig();
   const pathname = usePathname();
   const router = useRouter();
@@ -91,9 +92,11 @@ export function Sidebar() {
           <Search size={13} /> Search
           <kbd className="ml-auto font-mono text-[10px] opacity-60">⌘K</kbd>
         </button>
-        <button onClick={() => { setCapturing((c) => !c); setCreating(false); }} title="Quick capture" className={iconBtn}>
-          <Zap size={14} />
-        </button>
+        {feat?.harness && (
+          <button onClick={() => { setCapturing((c) => !c); setCreating(false); }} title="Quick capture" className={iconBtn}>
+            <Zap size={14} />
+          </button>
+        )}
         <button onClick={() => { setCreating((c) => !c); setCapturing(false); }} title="New note" className={iconBtn}>
           <FilePlus size={14} />
         </button>
@@ -154,7 +157,14 @@ export function Sidebar() {
         )}
       </nav>
 
-      <div className="flex items-center justify-end border-t border-border px-2 py-1.5">
+      <div className="flex items-center justify-between border-t border-border px-2 py-1.5">
+        <Link
+          href="/connect"
+          title="Connect an agent"
+          className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Plug size={14} />
+        </Link>
         <ThemeToggle />
       </div>
     </aside>
