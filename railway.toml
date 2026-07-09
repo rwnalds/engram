@@ -9,5 +9,6 @@ healthcheckTimeout = 100
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 5
 
-# Deploy this repo (the app). Mount a volume at /data and set VAULT_DIR=/data;
-# the app clones + git-syncs the remote vault repo (GIT_REMOTE) into that volume.
+# Deploy this repo (the app). Mount a volume at /data and set ENGRAM_DATA_DIR=/data;
+# app state + vault clones live there. Vault repos are connected in the dashboard
+# (Workspaces) — no GIT_REMOTE env. Most other config is set in Settings, not here.
