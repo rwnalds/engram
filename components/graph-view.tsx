@@ -124,7 +124,11 @@ export function GraphView() {
             simRef.current?.alphaTarget(0.3).restart();
           }
         } else if (pan.current?.active) {
-          setView((v) => ({ ...v, x: e.clientX - pan.current!.x, y: e.clientY - pan.current!.y }));
+          // Capture now — the setView updater runs later (batched), by which point a
+          // pointerup may have nulled pan.current (crash: "can't access property x").
+          const px = pan.current.x;
+          const py = pan.current.y;
+          setView((v) => ({ ...v, x: e.clientX - px, y: e.clientY - py }));
         }
       }}
       onPointerUp={() => {
