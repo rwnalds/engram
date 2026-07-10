@@ -5,6 +5,8 @@ import { currentActor } from "@/lib/actor";
 export interface CaptureResult extends Manifest {
   /** One sentence from the loop on what it did and why. */
   summary: string;
+  /** The note a caller should open — the primary thing this capture produced. */
+  path: string;
 }
 
 /**
@@ -44,9 +46,11 @@ export async function captureNote(rough: string): Promise<CaptureResult> {
 
   if (failure) throw new Error(failure);
 
-  const touched = manifest.created.length + manifest.updated.length + manifest.appended.length + manifest.moved.length;
-  if (touched === 0) {
+  // The dashboard opens one note after a capture; prefer what was created, then what was changed.
+  const primary =
+    manifest.created[0] ?? manifest.updated[0] ?? manifest.appended[0] ?? manifest.moved[0] ?? "";
+  if (!primary) {
     throw new Error(`capture wrote nothing. The model said: ${summary.trim() || "(nothing)"}`);
   }
-  return { ...manifest, summary: summary.trim() };
+  return { ...manifest, summary: summary.trim(), path: primary };
 }

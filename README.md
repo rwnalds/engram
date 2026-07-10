@@ -51,8 +51,9 @@ powers full-text search + a wikilink **knowledge graph**.
 
 ## Features
 
-- **MCP server** — 13 `brain_*` tools over one bearer-authenticated HTTP endpoint (`POST /api/mcp`,
-  streamable HTTP JSON-RPC). Connect any MCP client to a single URL.
+- **MCP server** — 14 `brain_*` tools over one bearer-authenticated HTTP endpoint (`POST /api/mcp`,
+  streamable HTTP JSON-RPC). Connect any MCP client to a single URL. **Per-agent token scopes**:
+  a read-only token never even sees the write tools.
 - **Human dashboard** — a **search-first home**, file tree, note viewer with **Obsidian callouts,
   wikilinks, and backlinks**, Preview / Edit / Split editor with autosave, ⌘K search + **in-page keyboard
   navigation**, "jump back in" recents, and a **force-directed knowledge graph**.
@@ -98,11 +99,12 @@ VAULT_DIR=/path/to/your/obsidian-or-markdown/vault bun dev
 ## MCP tools
 
 Agents only ever see the active vault — no repo, workspace, or GitHub tools are exposed.
+A `read`-scope token sees only the read tools. `brain_capture` appears only when the Curator is `full`.
 
 | | Tools |
 |---|---|
-| **Read** | `brain_search` · `brain_read` · `brain_list` · `brain_tree` · `brain_backlinks` · `brain_graph` · `brain_schema` |
-| **Write** | `brain_write` · `brain_edit` · `brain_append` · `brain_move` · `brain_create_folder` · `brain_delete` |
+| **Read** | `brain_search` · `brain_read` · `brain_list` · `brain_recent` · `brain_tree` · `brain_backlinks` · `brain_graph` · `brain_schema` |
+| **Write** (needs a `write`-scope token) | `brain_write` · `brain_edit` · `brain_append` · `brain_move` · `brain_create_folder` · `brain_delete` |
 
 Connect an agent (the dashboard → **Connect** page shows the exact command + token):
 
