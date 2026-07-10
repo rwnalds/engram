@@ -108,9 +108,8 @@ export function anthropicApiKey(): string {
  *
  *  off  — Engram never calls a model. A deterministic MCP server + dashboard.
  *  chat — a grounded, read-only conversation with the vault, in the dashboard.
- *  full — `brain_capture` is exposed over MCP, so an agent can hand Engram a rough dump and
- *         let it choose the path and frontmatter. (Chat is read-only in every mode today;
- *         write tools arrive with the unified agent loop.)
+ *  full — chat may edit notes, and `brain_capture` is exposed over MCP so an agent can hand
+ *         Engram a rough dump and let it choose the path. Neither surface can delete.
  *
  * Note this does NOT govern whether agents can mutate the vault: MCP write tools are
  * always available to a token with `write` scope (see lib/tokens.ts). The Curator only
@@ -135,7 +134,7 @@ export function curatorEnabled(): boolean {
   return curatorMode() !== "off";
 }
 
-/** The Curator may write on an agent's behalf: brain_capture is exposed over MCP. */
+/** The Curator may write: chat can edit notes, and brain_capture is exposed over MCP. */
 export function harnessEnabled(): boolean {
   return curatorMode() === "full";
 }

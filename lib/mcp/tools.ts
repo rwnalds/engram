@@ -19,7 +19,6 @@ import {
   writeNote,
   writeNoteRaw,
 } from "@/lib/vault/write";
-import { captureNote } from "@/lib/harness";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Args = Record<string, any>;
@@ -280,9 +279,13 @@ export const TOOLS: Tool[] = [
     name: "brain_capture",
     write: true,
     description:
-      "Capture a ROUGH note / brain-dump and let the vault file it automatically: it reads SCHEMA.md + the current folders, picks the right folder + filename, writes clean frontmatter, and structures the body. Use when you have unstructured input and don't want to decide the path yourself.",
+      "Hand over a ROUGH note / brain-dump and let the vault file it. An agent loop reads SCHEMA.md, searches for what already exists, then deliberately creates a new note, appends to a matching one, or archives what this supersedes — and returns a manifest of every path it touched. It reads a note before overwriting it, and never deletes. Use when you have unstructured input and don't want to choose the path yourself; use brain_write when you do.",
     inputSchema: { type: "object", properties: { text: s("the rough note / brain dump to file") }, required: ["text"] },
-    handler: async ({ text }) => await captureNote(String(text ?? "")),
+    // Imported lazily: harness -> agent -> tools would otherwise be a module cycle.
+    handler: async ({ text }) => {
+      const { captureNote } = await import("@/lib/harness");
+      return await captureNote(String(text ?? ""));
+    },
   },
   {
     name: "brain_delete",

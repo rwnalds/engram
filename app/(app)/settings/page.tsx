@@ -17,7 +17,7 @@ type CuratorMode = "off" | "chat" | "full";
 const CURATOR_MODES: { id: CuratorMode; label: string; blurb: string }[] = [
   { id: "off", label: "Off", blurb: "Engram never calls a model. A deterministic MCP server and dashboard." },
   { id: "chat", label: "Chat", blurb: "Ask questions of your vault in the dashboard. The model reads; it cannot write." },
-  { id: "full", label: "Full", blurb: "Adds brain_capture: an agent hands Engram a rough dump and it files the note. Chat stays read-only." },
+  { id: "full", label: "Full", blurb: "Chat can edit notes, and agents can file rough dumps with brain_capture. Neither can delete." },
 ];
 
 interface PublicSettings {
