@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
-import { Check } from "lucide-react";
+import { Check, Info } from "lucide-react";
 import { fetcher } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { CURATOR_MODELS, DEFAULT_CAPTURE_MODEL } from "@/lib/models";
@@ -15,9 +15,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 type CuratorMode = "off" | "chat" | "full";
 
 const CURATOR_MODES: { id: CuratorMode; label: string; blurb: string }[] = [
-  { id: "off", label: "Off", blurb: "Engram never calls a model. A deterministic MCP server and dashboard." },
-  { id: "chat", label: "Chat", blurb: "Ask questions of your vault in the dashboard. The model reads; it cannot write." },
-  { id: "full", label: "Full", blurb: "Chat can edit notes, and agents can file rough dumps with brain_capture. Neither can delete." },
+  { id: "off", label: "Off", blurb: "The harness is dormant. Engram is a plain MCP server and dashboard — your agents still read and write, but nothing inside Engram organizes on its own." },
+  { id: "chat", label: "Chat", blurb: "Chat with your vault in the dashboard, grounded in the real notes. The harness reads; it cannot change anything." },
+  { id: "full", label: "Full", blurb: "The harness can file rough dumps (brain_capture) and edit notes from chat. It reads before it overwrites, and never deletes." },
 ];
 
 interface PublicSettings {
@@ -52,6 +52,7 @@ export default function SettingsPage() {
   const [gitName, setGitName] = useState("");
   const [gitEmail, setGitEmail] = useState("");
   const [curator, setCurator] = useState<CuratorMode>("off");
+  const [curatorInfo, setCuratorInfo] = useState(false);
   const [model, setModel] = useState<string>(DEFAULT_CAPTURE_MODEL);
   const [apiKey, setApiKey] = useState("");
   const [ghId, setGhId] = useState("");
@@ -165,12 +166,51 @@ export default function SettingsPage() {
         {/* Curator */}
         <section className="mt-6 space-y-4 border-t border-border pt-6">
           <div>
-            <h2 className="text-sm font-medium">Curator</h2>
+            <div className="flex items-center gap-1.5">
+              <h2 className="text-sm font-medium">Curator</h2>
+              <button
+                type="button"
+                onClick={() => setCuratorInfo((v) => !v)}
+                aria-expanded={curatorInfo}
+                aria-label="What is the Curator?"
+                className="text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <Info size={13} />
+              </button>
+            </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Whether Engram itself runs a model. It does <em>not</em> control whether your agents can
-              edit the vault — a token&apos;s scope does, on the Connect page.
+              Engram&apos;s built-in harness — its own agent over your vault. This does not control
+              whether your <em>external</em> agents can edit notes; a token&apos;s scope does, on the
+              Connect page.
             </p>
           </div>
+
+          {curatorInfo && (
+            <div className="space-y-2 rounded-md border border-border bg-secondary/40 p-3 text-xs leading-relaxed text-muted-foreground">
+              <p>
+                <span className="text-foreground">What it is.</span> With the harness off, Engram is a
+                filing cabinet: your agents (Claude Code, Hermes, Cursor…) read and write through the
+                MCP, and nothing inside Engram thinks. Turn it on and Engram gains its own agent living
+                with your notes.
+              </p>
+              <p>
+                <span className="text-foreground">What it does.</span> In <em>Chat</em>, you ask your
+                vault questions and get answers grounded in the actual notes, with links — not made up.
+                In <em>Full</em>, you also hand it a rough dump (a messy meeting note, a voice-memo
+                transcript) and it files that into the right place with the right structure, or updates
+                the note that already covers it. It reads a note before overwriting, and never deletes.
+              </p>
+              <p>
+                <span className="text-foreground">Why enable it.</span> It&apos;s the difference between
+                a vault you have to keep tidy and one that helps keep itself tidy.
+              </p>
+              <p>
+                <span className="text-foreground">Why leave it off.</span> It runs on your Anthropic key,
+                so it costs tokens — and it sends note content to Anthropic to do its work. If that
+                matters for your data, keep it off; your agents still work without it.
+              </p>
+            </div>
+          )}
 
           <div className="inline-flex rounded-md border border-border p-0.5">
             {CURATOR_MODES.map((m) => (

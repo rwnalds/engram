@@ -260,7 +260,7 @@ export default function Home() {
           <Link
             href="/settings"
             className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
-            title="Whether Engram itself runs a model. Agents' write access is set per token, on Connect."
+            title="Engram's built-in harness — its own agent over your vault. Agents' write access is set per token, on Connect."
           >
             <span>
               Curator ·{" "}
