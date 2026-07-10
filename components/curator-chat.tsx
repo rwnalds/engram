@@ -12,9 +12,30 @@ import { RecentNotes } from "@/components/recent-notes";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+interface Manifest {
+  created: string[];
+  updated: string[];
+  appended: string[];
+  moved: string[];
+}
+
 interface Msg {
   role: "user" | "assistant";
   content: string;
+  /** In Full mode, what the Curator changed this turn — so a write is visible, not silent. */
+  changed?: Manifest;
+}
+
+/** Compact "created 1 · updated 2" summary, or null when nothing was written. */
+function changeSummary(m?: Manifest): { label: string; paths: string[] } | null {
+  if (!m) return null;
+  const parts: string[] = [];
+  if (m.created.length) parts.push(`created ${m.created.length}`);
+  if (m.updated.length) parts.push(`updated ${m.updated.length}`);
+  if (m.appended.length) parts.push(`appended ${m.appended.length}`);
+  if (m.moved.length) parts.push(`moved ${m.moved.length}`);
+  if (!parts.length) return null;
+  return { label: parts.join(" · "), paths: [...m.created, ...m.updated, ...m.appended, ...m.moved] };
 }
 
 export function CuratorChat() {
@@ -48,6 +69,7 @@ export function CuratorChat() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     let acc = "";
+    let changed: Manifest | undefined;
     try {
       const res = await fetch("/api/curator/chat", {
         method: "POST",
@@ -76,8 +98,21 @@ export function CuratorChat() {
           } else if (ev.type === "thinking") {
             setActivity("thinking…");
           } else if (ev.type === "tool") {
-            const verb = ev.name === "brain_search" ? "searching the vault…" : ev.name === "brain_read" ? "reading a note…" : "checking the vault…";
+            const verb =
+              ev.name === "brain_search"
+                ? "searching the vault…"
+                : ev.name === "brain_read"
+                  ? "reading a note…"
+                  : ev.name === "brain_write" || ev.name === "brain_edit"
+                    ? "writing a note…"
+                    : ev.name === "brain_append"
+                      ? "adding to a note…"
+                      : ev.name === "brain_move"
+                        ? "archiving a note…"
+                        : "checking the vault…";
             setActivity(verb);
+          } else if (ev.type === "manifest") {
+            changed = ev.manifest;
           } else if (ev.type === "error") {
             setError(ev.message || "error");
           }
@@ -86,7 +121,8 @@ export function CuratorChat() {
     } catch (e) {
       if ((e as Error).name !== "AbortError") setError(e instanceof Error ? e.message : "stream failed");
     } finally {
-      if (acc.trim()) setMessages((m) => [...m, { role: "assistant", content: acc }]);
+      if (acc.trim() || changeSummary(changed))
+        setMessages((m) => [...m, { role: "assistant", content: acc, changed }]);
       setStreamText("");
       setActivity("");
       setStreaming(false);
@@ -228,6 +264,22 @@ export function CuratorChat() {
             ) : (
               <div key={i} className="text-sm">
                 <Markdown content={m.content} resolve={(s) => `/n/${s}`} />
+                {(() => {
+                  const c = changeSummary(m.changed);
+                  if (!c) return null;
+                  return (
+                    <div className="mt-2 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground">
+                      <span className="text-foreground">Changed the vault</span> · {c.label}
+                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                        {c.paths.map((p) => (
+                          <a key={p} href={`/n/${p.replace(/\.md$/, "")}`} className="font-mono hover:text-foreground hover:underline">
+                            {p}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             ),
           )}
