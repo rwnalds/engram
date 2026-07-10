@@ -29,6 +29,17 @@ export const VAULT_IGNORE = new Set(
     .filter(Boolean),
 );
 
+/**
+ * Top-level folders whose notes are historical: demoted in search and excluded by default.
+ * Purely a ranking hint — the notes stay readable, and nothing is hidden from brain_read.
+ */
+export const ARCHIVE_FOLDERS = new Set(
+  (process.env.ARCHIVE_FOLDERS ?? "archive,archives,_archive,trash")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
+
 /** Bearer token required to call the MCP endpoint. */
 export const MCP_TOKEN = process.env.MCP_TOKEN ?? "";
 

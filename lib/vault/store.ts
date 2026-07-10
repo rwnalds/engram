@@ -6,15 +6,34 @@ import { VAULT_IGNORE } from "@/lib/config";
 import { activeVaultDir } from "@/lib/repos";
 import { scanVault } from "./scan";
 import { parseNote, stemOf } from "./parse";
+import { authorityOf, authorityRules, isArchivedPath, weightOf, type Authority } from "./authority";
 import type { Graph, GraphEdge, GraphNode, Note, NoteMeta, TreeNode } from "./types";
+
+interface IndexDoc {
+  id: string;
+  title: string;
+  aliases: string;
+  tags: string;
+  body: string;
+  folder: string;
+  type: string;
+  /** stored, not indexed — used for filtering + authority-weighted ranking */
+  status: string;
+  authority: Authority;
+  mtimeMs: number;
+}
 
 interface IndexState {
   dir: string;
   notes: Map<string, NoteMeta>;
+  /** path -> wikilink target stems. Kept so link/graph rebuilds need no disk IO. */
+  linksBySource: Map<string, string[]>;
   stemToPath: Map<string, string>;
+  /** stems claimed by more than one file — wikilinks to these resolve to the first, silently. */
+  duplicateStems: Map<string, string[]>;
   outEdges: Map<string, Set<string>>;
   inEdges: Map<string, Set<string>>;
-  search: MiniSearch;
+  search: MiniSearch<IndexDoc>;
   builtAt: number;
 }
 
@@ -22,52 +41,147 @@ let state: IndexState | null = null;
 let watcher: FSWatcher | null = null;
 let watchedDir = "";
 
+function newIndex(): MiniSearch<IndexDoc> {
+  return new MiniSearch<IndexDoc>({
+    fields: ["title", "aliases", "tags", "body", "folder", "type"],
+    storeFields: ["title", "folder", "type", "status", "authority", "mtimeMs"],
+    searchOptions: {
+      boost: { title: 3, aliases: 3, tags: 2 },
+      prefix: true,
+      fuzzy: 0.2,
+      // OR, deliberately. With AND, one query word the canonical note happens to lack
+      // ("tiers") drops it from the results entirely — and the superseded note that *does*
+      // use the word becomes the only answer. Authority weighting can only reorder what
+      // survives the combiner, so the combiner must not throw the truth away.
+      // Docs matching more terms still score higher; noise is handled by ranking, not exclusion.
+      combineWith: "OR",
+    },
+  });
+}
+
+function toDoc(meta: NoteMeta, body: string): IndexDoc {
+  return {
+    id: meta.path,
+    title: meta.title,
+    aliases: meta.aliases.join(" "),
+    tags: meta.tags.join(" "),
+    body,
+    folder: meta.folder,
+    type: meta.type ?? "",
+    status: meta.status ?? "",
+    authority: authorityOf(meta),
+    mtimeMs: meta.mtimeMs,
+  };
+}
+
+function readAndParse(
+  dir: string,
+  rel: string,
+  mtimeMs: number,
+): { meta: NoteMeta; body: string; stems: string[] } | null {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(dir, rel), "utf8");
+  } catch {
+    return null;
+  }
+  const { meta, body, rawLinks } = parseNote(rel, raw);
+  return { meta: { ...meta, mtimeMs }, body, stems: rawLinks.map((l) => stemOf(l.target)) };
+}
+
+/**
+ * Rebuild stem resolution + the link graph from in-memory maps only.
+ * Cheap (no disk IO), so it can run after every single-file change.
+ */
+function recomputeLinks(s: IndexState): void {
+  s.stemToPath = new Map();
+  s.duplicateStems = new Map();
+  for (const rel of [...s.notes.keys()].sort()) {
+    const slug = s.notes.get(rel)!.slug;
+    const first = s.stemToPath.get(slug);
+    if (first === undefined) {
+      s.stemToPath.set(slug, rel);
+    } else {
+      const dupes = s.duplicateStems.get(slug) ?? [first];
+      dupes.push(rel);
+      s.duplicateStems.set(slug, dupes);
+    }
+  }
+  for (const [slug, paths] of s.duplicateStems) {
+    console.warn(`[vault] duplicate stem "${slug}" (${paths.join(", ")}) — wikilinks resolve to the first.`);
+  }
+
+  s.outEdges = new Map();
+  s.inEdges = new Map();
+  for (const [src, stems] of s.linksBySource) {
+    for (const stem of stems) {
+      const tgt = s.stemToPath.get(stem);
+      if (!tgt || tgt === src) continue;
+      (s.outEdges.get(src) ?? s.outEdges.set(src, new Set()).get(src)!).add(tgt);
+      (s.inEdges.get(tgt) ?? s.inEdges.set(tgt, new Set()).get(tgt)!).add(src);
+    }
+  }
+}
+
 function buildState(): IndexState {
   const dir = activeVaultDir();
-  const files = scanVault(dir);
-  const notes = new Map<string, NoteMeta>();
-  const stemToPath = new Map<string, string>();
-  const linksBySource = new Map<string, string[]>();
-  const docs: Array<{ id: string; title: string; tags: string; body: string; folder: string; type: string }> = [];
+  const s: IndexState = {
+    dir,
+    notes: new Map(),
+    linksBySource: new Map(),
+    stemToPath: new Map(),
+    duplicateStems: new Map(),
+    outEdges: new Map(),
+    inEdges: new Map(),
+    search: newIndex(),
+    builtAt: Date.now(),
+  };
 
-  for (const f of files) {
-    let raw = "";
+  const docs: IndexDoc[] = [];
+  for (const f of scanVault(dir)) {
+    const parsed = readAndParse(dir, f.rel, f.mtimeMs);
+    if (!parsed) continue;
+    s.notes.set(f.rel, parsed.meta);
+    s.linksBySource.set(f.rel, parsed.stems);
+    docs.push(toDoc(parsed.meta, parsed.body));
+  }
+  s.search.addAll(docs);
+  recomputeLinks(s);
+  return s;
+}
+
+/** Add or update one file in the live index. Returns false when the file is gone. */
+function upsert(s: IndexState, rel: string): boolean {
+  let mtimeMs = 0;
+  try {
+    mtimeMs = fs.statSync(path.join(s.dir, rel)).mtimeMs;
+  } catch {
+    return false;
+  }
+  const parsed = readAndParse(s.dir, rel, mtimeMs);
+  if (!parsed) return false;
+  if (s.notes.has(rel)) {
     try {
-      raw = fs.readFileSync(f.abs, "utf8");
+      s.search.discard(rel);
     } catch {
-      continue;
-    }
-    const { meta, body, rawLinks } = parseNote(f.rel, raw);
-    const nm: NoteMeta = { ...meta, mtimeMs: f.mtimeMs };
-    notes.set(f.rel, nm);
-    if (!stemToPath.has(nm.slug)) {
-      stemToPath.set(nm.slug, f.rel);
-    } else if (process.env.NODE_ENV !== "production") {
-      console.warn(`[vault] duplicate stem "${nm.slug}" (${stemToPath.get(nm.slug)} vs ${f.rel}) — links resolve to the first.`);
-    }
-    linksBySource.set(f.rel, rawLinks.map((l) => stemOf(l.target)));
-    docs.push({ id: f.rel, title: nm.title, tags: nm.tags.join(" "), body, folder: nm.folder, type: nm.type ?? "" });
-  }
-
-  const outEdges = new Map<string, Set<string>>();
-  const inEdges = new Map<string, Set<string>>();
-  for (const [src, stems] of linksBySource) {
-    for (const stem of stems) {
-      const tgt = stemToPath.get(stem);
-      if (!tgt || tgt === src) continue;
-      (outEdges.get(src) ?? outEdges.set(src, new Set()).get(src)!).add(tgt);
-      (inEdges.get(tgt) ?? inEdges.set(tgt, new Set()).get(tgt)!).add(src);
+      /* not in the index — fall through to add */
     }
   }
+  s.notes.set(rel, parsed.meta);
+  s.linksBySource.set(rel, parsed.stems);
+  s.search.add(toDoc(parsed.meta, parsed.body));
+  return true;
+}
 
-  const search = new MiniSearch({
-    fields: ["title", "tags", "body", "folder", "type"],
-    storeFields: ["title", "folder", "type"],
-    searchOptions: { boost: { title: 3, tags: 2 }, prefix: true, fuzzy: 0.2, combineWith: "AND" },
-  });
-  search.addAll(docs);
-
-  return { dir, notes, stemToPath, outEdges, inEdges, search, builtAt: Date.now() };
+function remove(s: IndexState, rel: string): void {
+  if (!s.notes.has(rel)) return;
+  try {
+    s.search.discard(rel);
+  } catch {
+    /* already gone */
+  }
+  s.notes.delete(rel);
+  s.linksBySource.delete(rel);
 }
 
 function startWatcher(dir: string) {
@@ -88,18 +202,41 @@ function startWatcher(dir: string) {
         return [...VAULT_IGNORE].some((ig) => base === ig || p.includes(`${path.sep}${ig}${path.sep}`));
       },
     });
+
+    const pending = new Set<string>();
     let t: ReturnType<typeof setTimeout> | null = null;
-    const trigger = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => {
-        try {
+    let fullRebuild = false;
+
+    const flush = () => {
+      try {
+        if (fullRebuild || !state || state.dir !== dir) {
           state = buildState();
-        } catch (e) {
-          console.error("[vault] rebuild failed", e);
+        } else {
+          for (const rel of pending) if (!upsert(state, rel)) remove(state, rel);
+          recomputeLinks(state);
         }
-      }, 250);
+      } catch (e) {
+        console.error("[vault] index update failed", e);
+      }
+      pending.clear();
+      fullRebuild = false;
     };
-    watcher.on("add", trigger).on("change", trigger).on("unlink", trigger).on("addDir", trigger).on("unlinkDir", trigger);
+
+    const schedule = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(flush, 250);
+    };
+    const onFile = (abs: string) => {
+      if (!abs.toLowerCase().endsWith(".md")) return;
+      pending.add(path.relative(dir, abs).split(path.sep).join("/"));
+      schedule();
+    };
+    const onDir = () => {
+      fullRebuild = true;
+      schedule();
+    };
+
+    watcher.on("add", onFile).on("change", onFile).on("unlink", onFile).on("addDir", onDir).on("unlinkDir", onDir);
   } catch (e) {
     console.error("[vault] watcher failed to start", e);
   }
@@ -112,14 +249,32 @@ function ensure(): IndexState {
   return state;
 }
 
-/** Force a synchronous rebuild (after a write or a workspace switch). */
+/** Force a synchronous full rebuild (workspace switch, or after a git pull changed many files). */
 export function rebuildIndex(): void {
   state = buildState();
   startWatcher(state.dir);
 }
 
+/** Update just these paths (created, edited, moved, or deleted). No full re-scan. */
+export function refreshPaths(relPaths: string[]): void {
+  const s = ensure();
+  for (const rel of relPaths) {
+    if (!rel.toLowerCase().endsWith(".md")) continue;
+    if (!upsert(s, rel)) remove(s, rel);
+  }
+  recomputeLinks(s);
+}
+
 export function listNotes(): NoteMeta[] {
   return [...ensure().notes.values()];
+}
+
+/** Notes ordered by last modification, newest first. Powers "what changed lately". */
+export function listRecent(sinceMs?: number, limit = 20): NoteMeta[] {
+  return [...ensure().notes.values()]
+    .filter((n) => (sinceMs ? n.mtimeMs >= sinceMs : true))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, limit);
 }
 
 export function getNote(relPath: string): Note | null {
@@ -140,19 +295,93 @@ export interface SearchHit {
   title: string;
   folder: string;
   type?: string;
+  status?: string;
+  /** Trust class, independent of relevance. See lib/vault/authority.ts. */
+  authority: Authority;
   score: number;
+  snippet?: string;
 }
 
-export function searchNotes(q: string, limit = 40): SearchHit[] {
+export interface SearchOpts {
+  limit?: number;
+  /** Restrict to one top-level folder. */
+  folder?: string;
+  /** Include notes in archive folders (still ranked far below live ones). Default false. */
+  includeArchive?: boolean;
+  /** Attach ~200 chars of matching context per hit. Default true. */
+  snippets?: boolean;
+}
+
+/** First body line containing a query term (or the first prose line), trimmed for display. */
+function snippetFor(dir: string, rel: string, terms: string[]): string | undefined {
+  try {
+    const raw = fs.readFileSync(path.join(dir, rel), "utf8");
+    const { body } = parseNote(rel, raw);
+    const lines = body
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("---"));
+    const hit = lines.find((l) => {
+      const low = l.toLowerCase();
+      return terms.some((t) => low.includes(t));
+    });
+    const chosen = hit ?? lines[0];
+    if (!chosen) return undefined;
+    return chosen.length > 220 ? `${chosen.slice(0, 217)}…` : chosen;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Keyword search, then reweighted by authority.
+ *
+ * The ranking is deliberately two-stage: MiniSearch says how well a note *matches*,
+ * authorityOf() says how far it can be *trusted*. Without the second stage a superseded
+ * price list outranks the locked one, because it repeats the query words just as often.
+ */
+export function searchNotes(q: string, opts: SearchOpts = {}): SearchHit[] {
   const s = ensure();
   if (!q.trim()) return [];
-  return s.search.search(q).slice(0, limit).map((r) => ({
-    path: r.id as string,
-    title: (r as unknown as { title: string }).title,
-    folder: (r as unknown as { folder: string }).folder,
-    type: (r as unknown as { type?: string }).type || undefined,
-    score: r.score,
-  }));
+  const { limit = 20, folder, includeArchive = false, snippets = true } = opts;
+
+  const raw = s.search.search(q, {
+    boostDocument: (_id, _term, stored) => weightOf((stored?.authority as Authority) ?? "current"),
+    filter: (r) => {
+      const stored = r as unknown as { folder: string; authority: Authority };
+      if (!includeArchive && stored.authority === "archived") return false;
+      if (folder && stored.folder !== folder) return false;
+      return true;
+    },
+  });
+
+  const terms = q
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.replace(/[^a-z0-9-]/g, ""))
+    .filter((t) => t.length >= 3);
+
+  return raw.slice(0, limit).map((r) => {
+    const hit = r as unknown as {
+      id: string;
+      title: string;
+      folder: string;
+      type?: string;
+      status?: string;
+      authority: Authority;
+      score: number;
+    };
+    return {
+      path: hit.id,
+      title: hit.title,
+      folder: hit.folder,
+      type: hit.type || undefined,
+      status: hit.status || undefined,
+      authority: hit.authority,
+      score: hit.score,
+      snippet: snippets ? snippetFor(s.dir, hit.id, terms) : undefined,
+    };
+  });
 }
 
 export function getBacklinks(relPath: string): NoteMeta[] {
@@ -163,6 +392,43 @@ export function getBacklinks(relPath: string): NoteMeta[] {
 export function getOutlinks(relPath: string): NoteMeta[] {
   const s = ensure();
   return [...(s.outEdges.get(relPath) ?? [])].map((p) => s.notes.get(p)).filter(Boolean) as NoteMeta[];
+}
+
+/**
+ * What this vault actually looks like + how search will treat it. Returned by brain_schema so
+ * an agent meeting an unfamiliar vault discovers its conventions instead of assuming ours.
+ */
+export function vaultConventions() {
+  const s = ensure();
+  const folders = new Set<string>();
+  const statuses = new Map<string, number>();
+  const types = new Set<string>();
+  let archived = 0;
+
+  for (const n of s.notes.values()) {
+    folders.add(n.folder);
+    if (n.type) types.add(n.type);
+    if (n.status) statuses.set(n.status, (statuses.get(n.status) ?? 0) + 1);
+    if (isArchivedPath(n.path)) archived++;
+  }
+
+  return {
+    noteCount: s.notes.size,
+    archivedCount: archived,
+    folders: [...folders].sort(),
+    types: [...types].sort(),
+    statusesInUse: [...statuses.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([status, count]) => ({ status, count })),
+    ranking: authorityRules(),
+    integrity:
+      s.duplicateStems.size === 0
+        ? { duplicateStems: [] }
+        : {
+            duplicateStems: [...s.duplicateStems.entries()].map(([stem, paths]) => ({ stem, paths })),
+            warning: "Wikilinks to a duplicated stem resolve to the first path only. Rename one.",
+          },
+  };
 }
 
 export function getGraph(folder?: string): Graph {

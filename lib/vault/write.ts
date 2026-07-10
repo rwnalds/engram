@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
 import { activeVaultDir } from "@/lib/repos";
-import { rebuildIndex } from "./store";
+import { refreshPaths } from "./store";
 import { requestSync } from "@/lib/git";
 
 /** Resolve a vault-relative path to an absolute path in the active vault, refusing escapes. */
@@ -18,9 +18,10 @@ export function normalizeNotePath(relPath: string): string {
   return /\.md$/i.test(p) ? p : `${p}.md`;
 }
 
-function after(p: string) {
-  rebuildIndex();
-  requestSync(p);
+/** Re-index only what changed, then queue a git commit. `touched` are vault-relative paths. */
+function after(message: string, touched: string[]) {
+  refreshPaths(touched);
+  requestSync(message);
 }
 
 /** Write a note from a raw markdown string (frontmatter included). Used by the editor. */
@@ -29,7 +30,7 @@ export async function writeNoteRaw(relPath: string, content: string): Promise<st
   const abs = safeAbs(p);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   await fsp.writeFile(abs, content, "utf8");
-  after(`edit ${p}`);
+  after(`edit ${p}`, [p]);
   return p;
 }
 
@@ -52,7 +53,7 @@ export async function appendNote(relPath: string, text: string): Promise<string>
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   const sep = existing && !existing.endsWith("\n") ? "\n" : "";
   await fsp.writeFile(abs, `${existing}${sep}${text}\n`, "utf8");
-  after(`append ${p}`);
+  after(`append ${p}`, [p]);
   return p;
 }
 
@@ -61,13 +62,13 @@ export async function moveNote(from: string, to: string): Promise<string> {
   const b = safeAbs(normalizeNotePath(to));
   await fsp.mkdir(path.dirname(b), { recursive: true });
   await fsp.rename(a, b);
-  after(`move ${from} -> ${to}`);
+  after(`move ${from} -> ${to}`, [normalizeNotePath(from), normalizeNotePath(to)]);
   return normalizeNotePath(to);
 }
 
 export async function deleteNote(relPath: string): Promise<void> {
   await fsp.rm(safeAbs(normalizeNotePath(relPath)));
-  after(`delete ${relPath}`);
+  after(`delete ${relPath}`, [normalizeNotePath(relPath)]);
 }
 
 export async function createFolder(relPath: string): Promise<string> {

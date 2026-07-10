@@ -8,6 +8,8 @@ export interface NoteMeta {
   folder: string;
   type?: string;
   tags: string[];
+  /** Alternate names/synonyms for this note, from `aliases:`. Indexed like the title. */
+  aliases: string[];
   status?: string;
   created?: string;
   updated?: string;

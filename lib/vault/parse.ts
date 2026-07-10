@@ -50,6 +50,47 @@ export function extractRawLinks(body: string, frontmatter: Record<string, unknow
   return links;
 }
 
+/** Every markdown heading in a body, in document order, without the leading #s. */
+export function listHeadings(body: string): string[] {
+  return body
+    .split("\n")
+    .filter((l) => /^#{1,6}\s+\S/.test(l))
+    .map((l) => l.replace(/^#{1,6}\s+/, "").trim());
+}
+
+/**
+ * Return one section of a note: the matching heading plus everything under it, stopping at
+ * the next heading of the same or higher level. Lets an agent read 40 lines of a 1000-line
+ * document instead of all of it. Matches case-insensitively, by prefix.
+ */
+export function extractSection(body: string, heading: string): string | null {
+  const lines = body.split("\n");
+  const want = heading.replace(/^#+\s*/, "").trim().toLowerCase();
+  if (!want) return null;
+
+  let start = -1;
+  let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const text = m[2].trim().toLowerCase();
+    if (text === want || text.startsWith(want)) {
+      start = i;
+      level = m[1].length;
+      break;
+    }
+  }
+  if (start === -1) return null;
+
+  const out = [lines[start]];
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = /^(#{1,6})\s+/.exec(lines[i]);
+    if (m && m[1].length <= level) break;
+    out.push(lines[i]);
+  }
+  return out.join("\n").trim();
+}
+
 export interface ParsedNote {
   meta: Omit<NoteMeta, "mtimeMs">;
   body: string;
@@ -78,6 +119,7 @@ export function parseNote(relPath: string, raw: string): ParsedNote {
     folder: folderOf(relPath),
     type: typeof data.type === "string" ? data.type : tags[0],
     tags,
+    aliases: normalizeTags(data.aliases),
     status: data.status != null ? String(data.status) : undefined,
     created: data.created != null ? String(data.created) : undefined,
     updated:
