@@ -20,6 +20,8 @@ tags: [alpha, beta]
 status: active           # see "Authority" — this drives search ranking
 aliases: [win-back, churned]   # synonyms; searched like the title
 created: 2026-01-15
+valid_until: 2026-12-31   # optional — after this the note is stale (see "Temporal validity")
+superseded_by: "[[decisions/new-note]]"   # optional — set by brain_supersede when a fact changes
 related:
   - "[[projects/engram]]"
 ---
@@ -46,6 +48,30 @@ it would without them: **the feature is opt-in and degrades to nothing.**
 
 Override the archive folder names with the `ARCHIVE_FOLDERS` env var.
 
+## Temporal validity — "is this still true?"
+
+Authority tells you which note to trust. Validity tells you whether it's *still true*. A retired
+price often lives in a perfectly legitimate note, so authority alone can't catch it. Two frontmatter
+fields make validity explicit and written, rather than something search has to guess from the text:
+
+- **`superseded_by: "[[new-note]]"`** — this note has been replaced. Set automatically by
+  `brain_supersede` (below); you can also set it by hand.
+- **`valid_until: 2026-12-31`** — this note's facts expire after that date (inclusive through end of
+  day). Useful for a promo price, a quarterly rate, a temporary policy.
+
+A note that is superseded or past its `valid_until` is treated as `superseded` **regardless of a
+`locked` status** — a blessed-but-stale doc no longer outranks a fresh one. Both are **withheld from
+default search** and returned in `brain_search`'s `excluded` list with a reason (`"superseded by
+new-note"`, `"expired 2026-12-31"`), so an agent can say *what it ignored and why* instead of quoting
+it. `includeInvalid: true` brings them back, demoted. `brain_read` warns when a note is retired.
+
+## Facts of record — make them their own note
+
+Because validity is per-note, **a fact that changes (a price, a rate, a legal entity) should be its
+own small note.** Then retiring the value is just superseding that note — no need to surgically edit
+a value buried inside a larger prose doc. This is the convention that gives you value-level
+supersession without value-level machinery.
+
 ### The rule this exists to enforce
 **Compose for context; route for facts.** Reading widely across notes to understand a client or a
 history is what the graph is for. But a *single-valued fact* — a price, a guarantee, a legal entity,
@@ -54,12 +80,18 @@ a contract term — has exactly one owning note. Don't merge sources, don't take
 it rather than averaging them.
 
 ### Retiring a note
-When something stops being true, **`brain_move` it into `archive/`** rather than deleting it, and add
-a pointer in the replacement saying what superseded what. Archiving removes it from search; deleting
-destroys the reasoning trail. An archived note with no superseding pointer is worse than a deleted
-one — it still looks like an answer.
+Three ways to retire, in order of preference:
 
-Mark a note `status: superseded` when it must stay in place (a decision log, where chronology matters).
+- **A fact changed (a price, a term) → `brain_supersede(from, to)`.** One atomic operation: it marks
+  the old note `superseded_by` the new one (in place, body preserved) and links them in a single
+  commit, so add-and-retire can't drift apart. Search then withholds the old note with a reason.
+- **A whole doc is obsolete → `brain_move` it into `archive/`.** Archiving removes it from search;
+  deleting destroys the reasoning trail.
+- **It must stay in place (a decision log, where chronology matters) → set `status: superseded`** or
+  a `valid_until` date by hand.
+
+Never delete unless the note is wrong or a duplicate. An archived note with no superseding pointer is
+worse than a deleted one — it still looks like an answer.
 
 ## Links
 - `[[note]]` / `[[../path/note|Alias]]` — resolve by filename stem.

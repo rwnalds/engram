@@ -18,10 +18,15 @@
 
 Engram is a self-hosted **MCP server + dashboard** that gives Claude Code, Cursor, Hermes, and any
 [Model Context Protocol](https://modelcontextprotocol.io) agent **shared, long-term memory they read
-_and write_** — over a plain, **git-backed folder of markdown you own**.
+_and write_** — over a plain, **git-backed folder of markdown you own**. Built for the case a single
+agent's memory never hits: **a team running several agents against one brain.**
 
-Autonomous agents forget everything between sessions. Engram is the persistent layer that remembers —
-decisions, context, and everything your agents learn — in one vault they all share.
+Autonomous agents forget everything between sessions — and worse, they can't tell what they remember
+is _still true_. An agent pulls an old README, a retired price, an API doc you changed months ago, and
+quotes it with full confidence, because keyword and vector search both rank by resemblance, not truth.
+Engram makes **"is this still true"** a first-class, written property: mark a fact superseded or
+expired and search **withholds it — and tells the agent what it skipped and why.** Per-agent read/write
+tokens and a git audit trail of who-wrote-what keep it sane when the writers are a fleet, not just you.
 
 Unlike a headless memory store, **you can watch it happen.** A fast dashboard lets you **search your
 brain**, see exactly what every agent and teammate changed (with per-file **diffs**), **jump back** into
@@ -42,16 +47,18 @@ powers full-text search + a wikilink **knowledge graph**.
 
 ## What it's for
 
+- **Shared memory for a team running multiple agents** — one vault, many agents reading and writing
+  concurrently, with per-agent read/write tokens and a git audit trail of who changed what.
+- **Memory that knows what's still true** — retire a price, a term, or a changed API doc and your agents
+  stop quoting it; they're told what they skipped and why. The failure a single agent's memory never fixes.
 - **Long-term memory for Claude Code** and other coding agents — stop re-explaining your project every session.
-- **Shared memory for a fleet of AI agents** — one vault, many agents reading and writing concurrently.
-- **A team knowledge base agents can actually write to** — meeting notes, decisions, client context, SOPs.
 - **A self-hosted, Obsidian-compatible second brain** exposed over MCP — your notes, your server, your git repo.
 - **Memory you can see, not a black box** — a dashboard to search, watch (with diffs), and curate what your agents remember.
 - **Markdown RAG without the vector database** — full-text search + a link graph over human-readable files.
 
 ## Features
 
-- **MCP server** — 14 `brain_*` tools over one bearer-authenticated HTTP endpoint (`POST /api/mcp`,
+- **MCP server** — 15 `brain_*` tools over one bearer-authenticated HTTP endpoint (`POST /api/mcp`,
   streamable HTTP JSON-RPC). Connect any MCP client to a single URL. **Per-agent token scopes**:
   a read-only token never even sees the write tools.
 - **Human dashboard** — a **search-first home**, file tree, note viewer with **Obsidian callouts,
@@ -61,6 +68,12 @@ powers full-text search + a wikilink **knowledge graph**.
   query words as often as the live one. Every hit carries an **authority** (`authoritative` → `current`
   → `provisional` → `superseded` → `archived`) derived from the note's folder and frontmatter — so your
   agents quote the locked doc, not the dead one. Markdown RAG that won't hand back yesterday's answer.
+- **Temporal validity + explainable rejection** — mark a fact `superseded_by` another note or give it a
+  `valid_until` date, and search **withholds it by default** (even if it's `locked`) — then hands the
+  agent an `excluded` list of what it skipped, each with a reason (`"expired 2026-06-01"`). One atomic
+  **`brain_supersede`** retires the old fact and links the new one in a single commit, so add-and-retire
+  can't drift apart. This is the difference between an agent that *remembers* and one that knows what's
+  **still true**.
 - **Audit trail + access control** — every write is attributed in **git** to the token or human that
   made it, with expandable **per-file diffs** in the activity feed. Give an agent a **read-only token**
   and it never even sees the write tools; a **write** token can create, edit, move, and archive.
@@ -121,7 +134,7 @@ A `read`-scope token sees only the read tools. `brain_capture` appears only when
 | | Tools |
 |---|---|
 | **Read** | `brain_search` · `brain_read` · `brain_list` · `brain_recent` · `brain_tree` · `brain_backlinks` · `brain_graph` · `brain_schema` |
-| **Write** (needs a `write`-scope token) | `brain_write` · `brain_edit` · `brain_append` · `brain_move` · `brain_create_folder` · `brain_delete` |
+| **Write** (needs a `write`-scope token) | `brain_write` · `brain_edit` · `brain_append` · `brain_move` · `brain_supersede` · `brain_create_folder` · `brain_delete` |
 
 Connect an agent (the dashboard → **Connect** page shows the exact command + token):
 
@@ -156,10 +169,12 @@ Claude Code search, read, and write persistent notes across sessions.
 Yes. Every agent points at the same MCP URL and reads/writes the same active vault — that's the point.
 Give each agent its own bearer token, `read` or `write` — a read-only token can't mutate your notes.
 
-**How do I stop an agent from returning outdated notes?**
-Mark a note `status: superseded` or move it to `archive/`, and Engram's **authority-aware** ranking
-demotes it — search knows relevance *and* trust, so agents quote the current doc, not the dead one.
-Every result carries an `authority` field for the agent to check.
+**How do I stop an agent from quoting outdated facts?**
+Retire the fact and search stops surfacing it. When a value changes, call **`brain_supersede(old, new)`** —
+one atomic commit marks the old note `superseded_by` the new one, and it's **withheld from search by
+default** (even if it's `locked`). Or set **`valid_until: 2026-12-31`** on a note and it self-expires.
+Retired matches don't vanish silently: `brain_search` returns them in an **`excluded`** list with a
+reason (`"expired 2026-06-01"`), so the agent can say *what it ignored and why* instead of quoting it.
 
 **How do I know what an agent changed?**
 Every write is committed to git attributed to the token or human behind it, and the dashboard's
@@ -202,4 +217,5 @@ Obsidian-compatible · markdown · knowledge graph · wikilinks · PKM · Zettel
 Hermes agent memory · Cursor memory · RAG without a vector database · chat with your markdown notes ·
 git-backed agent activity feed · audit trail for AI agents · authority-aware search · read-only vs
 write MCP tokens · agent access control · self-organizing notes · agentic note capture · AI that files
-your notes · Basic Memory alternative · mem0 alternative.</sub>
+your notes · temporal validity · stale memory · agents quoting outdated facts · supersede · note expiry ·
+shared memory for a team of agents · Basic Memory alternative · mem0 alternative.</sub>
