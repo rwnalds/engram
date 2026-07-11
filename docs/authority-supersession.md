@@ -71,9 +71,33 @@ The version to build:
   the old value automatically, or surface it for approval? (Consistent with the graduation ladder:
   propose first, earn auto.)
 
+## Write-path atomicity, and hard exclusion for facts-of-record
+
+> Later commenter, same thread. Sharpened the write-path point and added a retrieval-class point.
+
+**Atomicity is the whole game.** Read-side authority is worthless if the flip to `superseded` is a
+separate step a human or agent can skip. If "add the new fact" and "retire the old one" are two
+operations, they drift, and authority-aware search then confidently ranks a stale note as current
+again. In the commenter's words: *"otherwise you've just moved the bug from retrieval to
+bookkeeping."* The durable version is **supersession as one atomic operation** — the write that adds
+the new value demotes its predecessor in the same commit, so add and retire cannot come apart. This
+makes the capture hook non-optional: capture already searches before it files, so it is the place to
+fuse add + retire into a single write.
+
+**Soft demotion is not enough for facts-of-record.** relevance × authority is a soft penalty, and
+soft loses sometimes: a thin one-line live price note can be out-ranked by a verbose retired price
+list that matches the query better, penalty and all. For the facts-of-record class (price, contract
+terms, legal entity), **hard-exclude `superseded` by default** and surface it only when history is
+explicitly requested, rather than trusting the weight to sink it far enough.
+
+Current state, for the build: `archived` is *already* hard-excluded from agent search by default;
+`superseded` is only soft-demoted (≈0.15×). Extending the hard exclusion to `superseded` — at least
+for a facts-of-record class — is a small, correct change this comment is right to push.
+
 ## Source
 
-IndieHackers launch thread for Engram, July 2026. Two independent commenters converged on:
+IndieHackers launch thread for Engram, July 2026. Several commenters, independently, converged on:
 location-authority is a good heuristic but blind to value-level retirement; the fix is to record
-supersession as an event at write time; readable files are the right place to keep it. Credit to
-that thread for sharpening the model.
+supersession as an event at write time (atomically, in the same commit that adds the new fact);
+facts-of-record want a hard exclusion, not a soft demote; and readable files are the right place to
+keep all of it. Credit to that thread for sharpening the model.
