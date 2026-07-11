@@ -9,13 +9,14 @@ import {
   searchNotes,
   vaultConventions,
 } from "@/lib/vault/store";
-import { authorityOf } from "@/lib/vault/authority";
+import { effectiveAuthority } from "@/lib/vault/authority";
 import { extractSection, listHeadings } from "@/lib/vault/parse";
 import {
   appendNote,
   createFolder,
   deleteNote,
   moveNote,
+  supersedeNote,
   writeNote,
   writeNoteRaw,
 } from "@/lib/vault/write";
@@ -131,11 +132,12 @@ export const TOOLS: Tool[] = [
     handler: ({ path, section }) => {
       const n = getNote(String(path));
       if (!n) return { error: "not found", path };
+      const eff = effectiveAuthority(n);
       const base = {
         path: n.path,
         title: n.title,
         status: n.status,
-        authority: authorityOf(n),
+        authority: eff.authority,
         tags: n.tags,
         frontmatter: n.frontmatter,
         backlinks: getBacklinks(n.path).map((b) => b.path),
@@ -143,7 +145,11 @@ export const TOOLS: Tool[] = [
           ? {
               warning: `This note's frontmatter is unparseable (${n.frontmatterError}), so its status, tags and title are being ignored — whatever it claims about itself is NOT in effect. Usual cause: an unquoted ":" in a value.`,
             }
-          : {}),
+          : eff.retired
+            ? {
+                warning: `This note is ${eff.reason} — it is history, not a current fact. Do not quote it as current; find the note that replaced it.`,
+              }
+            : {}),
       };
       if (!section) return { ...base, content: n.raw };
 
@@ -167,7 +173,7 @@ export const TOOLS: Tool[] = [
         type: n.type,
         tags: n.tags,
         status: n.status,
-        authority: authorityOf(n),
+        authority: effectiveAuthority(n).authority,
       })),
   },
   {
@@ -188,7 +194,7 @@ export const TOOLS: Tool[] = [
         title: n.title,
         folder: n.folder,
         status: n.status,
-        authority: authorityOf(n),
+        authority: effectiveAuthority(n).authority,
         modified: new Date(n.mtimeMs).toISOString(),
       }));
     },
@@ -276,6 +282,32 @@ export const TOOLS: Tool[] = [
     description: "Create a new folder in the vault (with a .gitkeep).",
     inputSchema: { type: "object", properties: { path: s("folder path") }, required: ["path"] },
     handler: async ({ path }) => ({ ok: true, path: await createFolder(String(path)) }),
+  },
+  {
+    name: "brain_supersede",
+    write: true,
+    description:
+      "Retire a fact and replace it, atomically. When a fact changes (a price, a term, a decision), DON'T just add a new note — the old value keeps matching searches and gets quoted. `brain_supersede(from, to)` marks the old note superseded in place (body preserved) and links it to the new one, in a single commit, so add-and-retire can't drift apart. After this, search withholds the old note with the reason \"superseded by <to>\".\n\n" +
+      "`from` = the note being retired; `to` = the note that replaces it. If `to` doesn't exist yet, pass `body` (its markdown) and it's created; otherwise write `to` first, then supersede. `reason` is recorded on the old note. Prefer this over brain_move for a value that changed (move is for relocation).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: s("the note being retired (vault-relative path)"),
+        to: s("the note that replaces it (vault-relative path)"),
+        reason: s("optional — why it was retired, e.g. 'repriced Q3'"),
+        body: s("optional — markdown for `to` if it doesn't exist yet"),
+      },
+      required: ["from", "to"],
+    },
+    handler: async ({ from, to, reason, body }) => {
+      const r = await supersedeNote(
+        String(from),
+        String(to),
+        reason ? String(reason) : undefined,
+        body ? String(body) : undefined,
+      );
+      return { ok: true, ...r, path: r.to };
+    },
   },
   {
     name: "brain_capture",

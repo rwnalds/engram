@@ -3,6 +3,7 @@ import path from "node:path";
 import matter from "gray-matter";
 import { activeVaultDir } from "@/lib/repos";
 import { refreshPaths } from "./store";
+import { humanize, stemOf } from "./parse";
 import { checkFrontmatter, frontmatterErrorMessage } from "./validate";
 import { requestSync } from "@/lib/git";
 import { currentActor } from "@/lib/actor";
@@ -135,6 +136,83 @@ export async function moveNote(from: string, to: string): Promise<string> {
 export async function deleteNote(relPath: string): Promise<void> {
   await fsp.rm(safeAbs(normalizeNotePath(relPath)));
   after(`delete ${relPath}`, [normalizeNotePath(relPath)]);
+}
+
+/**
+ * Atomically retire OLD in favor of NEW, in a single commit.
+ *
+ * This is the "add and retire can't drift apart" primitive. It marks the old note superseded
+ * *in place* (frontmatter only — body preserved, so backlinks and chronology survive and the
+ * truncation guard never trips), ensures the replacement exists, and records both in ONE `after()`
+ * call so git-sync produces exactly one commit (the `moveNote` atomicity pattern). Query-time
+ * search then withholds the old note with the reason "superseded by <new>".
+ *
+ * Uses raw `fsp` writes deliberately — `writeNote`/`appendNote` each call `after()` themselves,
+ * which would split the operation across two commits.
+ */
+export async function supersedeNote(
+  from: string,
+  to: string,
+  reason?: string,
+  body?: string,
+): Promise<{ from: string; to: string }> {
+  const fromPath = normalizeNotePath(from);
+  const toPath = normalizeNotePath(to);
+  if (fromPath === toPath) throw new Error("supersede: `from` and `to` must be different notes.");
+  const fromAbs = safeAbs(fromPath);
+  const toAbs = safeAbs(toPath);
+
+  let oldRaw: string;
+  try {
+    oldRaw = await fsp.readFile(fromAbs, "utf8");
+  } catch {
+    throw new Error(`Cannot supersede ${fromPath}: it does not exist.`);
+  }
+  // Refuse rather than silently rewrite a note whose YAML is already broken.
+  const check = checkFrontmatter(oldRaw);
+  if (!check.ok) {
+    throw new Error(`Refusing to supersede ${fromPath}: its frontmatter is already unparseable (${check.error}). Fix it first.`);
+  }
+
+  const toStem = stemOf(toPath);
+  const fromStem = stemOf(fromPath);
+  const today = new Date(Date.now()).toISOString().slice(0, 10);
+
+  // 1. Mark OLD superseded in place — frontmatter only, body verbatim.
+  const g = matter(oldRaw);
+  const data: Record<string, unknown> = { ...(g.data as Record<string, unknown>) };
+  data.status = "superseded";
+  data.superseded_by = `[[${toStem}]]`;
+  data.superseded_at = today;
+  if (reason) data.superseded_reason = reason;
+  const oldOut = matter.stringify(g.content, data);
+
+  // 2. Prepare NEW if it doesn't exist yet (from `body`, or a minimal stub linking back).
+  let newContent: string | null = null;
+  try {
+    await fsp.access(toAbs);
+  } catch {
+    if (body && body.trim().startsWith("---")) {
+      const bc = checkFrontmatter(body);
+      if (!bc.ok) throw new Error(`supersede: the replacement's frontmatter is invalid (${bc.error}). Pass a plain body, or valid YAML.`);
+      newContent = body;
+    } else {
+      newContent = matter.stringify(body?.trim() || `Supersedes [[${fromStem}]]${reason ? ` — ${reason}` : ""}.`, {
+        title: humanize(toStem),
+        supersedes: `[[${fromStem}]]`,
+      });
+    }
+  }
+
+  // 3. Write both, then one after() → one refreshPaths + one commit.
+  await fsp.mkdir(path.dirname(fromAbs), { recursive: true });
+  await fsp.writeFile(fromAbs, oldOut, "utf8");
+  if (newContent !== null) {
+    await fsp.mkdir(path.dirname(toAbs), { recursive: true });
+    await fsp.writeFile(toAbs, newContent, "utf8");
+  }
+  after(`supersede ${fromPath} -> ${toPath}${reason ? `: ${reason}` : ""}`, [fromPath, toPath]);
+  return { from: fromPath, to: toPath };
 }
 
 export async function createFolder(relPath: string): Promise<string> {
