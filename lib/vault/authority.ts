@@ -63,6 +63,50 @@ export function weightOf(a: Authority): number {
   return WEIGHT[a];
 }
 
+/** Base authority overlaid with temporal validity, plus a human-readable reason when retired. */
+export interface EffectiveAuthority {
+  authority: Authority;
+  /** Why the note is retired, e.g. "superseded by price-live" or "expired 2026-06-01". */
+  reason?: string;
+  /** True when the note must not be treated as current fact (superseded, expired, or archived). */
+  retired: boolean;
+}
+
+/**
+ * Overlay temporal validity onto an already-known base authority.
+ *
+ * `authorityOf` is text-only and timeless, so a `locked` note stays authoritative forever. This
+ * demotes a note that was explicitly superseded (`superseded_by`) or has passed its `valid_until`
+ * to `superseded`, regardless of how authoritative its text claims to be — and returns a reason.
+ * Precedence: archived → superseded (explicit) → expired.
+ *
+ * Kept separate from `effectiveAuthority` so the search path, which only has the pre-computed base
+ * authority in the index (not status/tags), can overlay without re-classifying.
+ */
+export function overlayValidity(
+  base: Authority,
+  validUntil: number | null | undefined,
+  supersededBy: string | null | undefined,
+  now: number = Date.now(),
+): EffectiveAuthority {
+  if (base === "archived") return { authority: "archived", reason: "archived", retired: true };
+  if (supersededBy) return { authority: "superseded", reason: `superseded by ${supersededBy}`, retired: true };
+  if (base === "superseded") return { authority: "superseded", reason: "marked superseded", retired: true };
+  if (validUntil != null && validUntil < now) {
+    const on = new Date(validUntil).toISOString().slice(0, 10);
+    return { authority: "superseded", reason: `expired ${on} (no replacement)`, retired: true };
+  }
+  return { authority: base, retired: false };
+}
+
+/** The effective authority of a note: its text-based class, overlaid with validity. For live reads. */
+export function effectiveAuthority(
+  meta: { path: string; status?: string; tags?: string[]; validUntil?: number; supersededBy?: string },
+  now: number = Date.now(),
+): EffectiveAuthority {
+  return overlayValidity(authorityOf(meta), meta.validUntil, meta.supersededBy, now);
+}
+
 /**
  * The live ranking contract, returned by brain_schema so an agent working against a vault
  * it has never seen can discover the rules instead of guessing them.

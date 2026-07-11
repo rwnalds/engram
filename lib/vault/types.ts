@@ -13,6 +13,10 @@ export interface NoteMeta {
   status?: string;
   created?: string;
   updated?: string;
+  /** From `valid_until:` — epoch ms, inclusive through end of that day. Past it, the note is stale. */
+  validUntil?: number;
+  /** From `superseded_by:` — the stem of the note that replaced this one. Marks this note retired. */
+  supersededBy?: string;
   frontmatter: Record<string, unknown>;
   /**
    * Set when the note opens with `---` but its YAML could not be parsed. The frontmatter is

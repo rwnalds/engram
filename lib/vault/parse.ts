@@ -97,6 +97,37 @@ export interface ParsedNote {
   rawLinks: RawLink[];
 }
 
+/**
+ * Parse a `valid_until` frontmatter value to an epoch-ms deadline, inclusive through the end of
+ * that day. gray-matter/js-yaml turns a bare `valid_until: 2026-06-01` into a JS `Date`; a quoted
+ * or odd value stays a string. A date-only value (midnight UTC) expires at 23:59:59.999 of that
+ * day, not 00:00, so a note doesn't go stale mid-business-day. Returns undefined when unparseable.
+ */
+export function parseValidUntil(v: unknown): number | undefined {
+  if (v == null) return undefined;
+  let d: Date;
+  if (v instanceof Date) {
+    d = v;
+  } else {
+    const ms = Date.parse(String(v).trim());
+    if (Number.isNaN(ms)) return undefined;
+    d = new Date(ms);
+  }
+  const t = d.getTime();
+  if (Number.isNaN(t)) return undefined;
+  const midnightUTC =
+    d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return midnightUTC ? t + 24 * 60 * 60 * 1000 - 1 : t;
+}
+
+/** Normalize a `superseded_by` value (may be `[[wikilink]]`, alias, or path) to a bare stem. */
+function supersededStem(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  const inner = String(v).replace(/^\s*\[\[/, "").replace(/\]\]\s*$/, "");
+  const stem = stemOf(inner);
+  return stem || undefined;
+}
+
 export function parseNote(relPath: string, raw: string): ParsedNote {
   let data: Record<string, unknown> = {};
   let body = raw;
@@ -133,6 +164,8 @@ export function parseNote(relPath: string, raw: string): ParsedNote {
     created: data.created != null ? String(data.created) : undefined,
     updated:
       data.updated != null ? String(data.updated) : data.date != null ? String(data.date) : undefined,
+    validUntil: parseValidUntil(data.valid_until),
+    supersededBy: supersededStem(data.superseded_by),
     frontmatter: data,
     frontmatterError,
   };
