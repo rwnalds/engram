@@ -18,3 +18,6 @@ next-env.d.ts
 sample-vault/.gitignore
 # local working notes (not part of the OSS repo)
 HANDOFF.md
+
+# local design/roadmap notes — never published
+.notes/
