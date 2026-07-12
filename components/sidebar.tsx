@@ -79,17 +79,18 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-dvh w-64 shrink-0 flex-col border-r border-border bg-sidebar">
-      <div className="flex h-12 shrink-0 items-center gap-2 px-3">
+      {/* Hidden on mobile — the mobile top bar already shows the app name + search. */}
+      <div className="hidden h-12 shrink-0 items-center gap-2 px-3 md:flex">
         <div className="size-2 rounded-full bg-primary" />
         <span className="text-sm font-medium tracking-tight">{appName}</span>
       </div>
 
       <WorkspaceSwitcher />
 
-      <div className="flex gap-1 px-2 pb-2">
+      <div className="flex gap-1 px-2 pb-2 pt-2 md:pt-0">
         <button
           onClick={() => (window as unknown as { __openPalette?: () => void }).__openPalette?.()}
-          className="flex flex-1 items-center gap-2 rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          className="hidden flex-1 items-center gap-2 rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground md:flex"
         >
           <Search size={13} /> Search
           <kbd className="ml-auto font-mono text-[10px] opacity-60">⌘K</kbd>
