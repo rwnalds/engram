@@ -126,6 +126,19 @@ Point it at your own vault:
 VAULT_DIR=/path/to/your/obsidian-or-markdown/vault bun dev
 ```
 
+### Two ways to run it
+
+- **Hosted mode (team):** the dashboard + HTTP MCP server above — self-host it once, many agents and
+  teammates connect over `POST /api/mcp`. This is the main mode.
+- **Local mode (stdio):** a plain stdio MCP server over a folder, no HTTP/auth/git — for a single
+  machine, Claude Desktop / Cursor, or a registry's Docker introspection:
+
+  ```bash
+  bun run mcp:stdio /path/to/your/vault      # defaults to ./sample-vault
+  ```
+
+  Same `brain_*` tools. Image: `Dockerfile.mcp` (`CMD ["bun", "scripts/mcp-stdio.ts"]`).
+
 ## MCP tools
 
 Agents only ever see the active vault — no repo, workspace, or GitHub tools are exposed.

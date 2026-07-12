@@ -1,0 +1,30 @@
+# Engram — standalone stdio MCP server.
+#
+# This is the "local mode" image: it serves the brain_* tools over stdio against a folder of
+# markdown, with no HTTP, no auth, no git. It's what registries (Glama, Smithery) run to
+# introspect the tools, and what Claude Desktop / Cursor run over stdio.
+#
+# The full dashboard + HTTP MCP server for a self-hosted team is the root `Dockerfile`.
+#
+# By default it serves the bundled sample-vault. Mount your own and point VAULT_DIR at it:
+#   docker run -i -v /path/to/vault:/vault -e VAULT_DIR=/vault <image>
+
+FROM oven/bun:1
+
+WORKDIR /app
+
+# git + certs: only used if you point it at a git-backed vault; harmless otherwise.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile
+
+COPY . .
+
+ENV NODE_ENV=production \
+    GIT_SYNC_ENABLED=false
+
+# stdio MCP server: JSON-RPC on stdin/stdout. Nothing here may write to stdout.
+CMD ["bun", "scripts/mcp-stdio.ts"]
