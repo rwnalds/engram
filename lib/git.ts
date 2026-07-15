@@ -7,7 +7,26 @@ import { rebuildIndex } from "@/lib/vault/store";
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let pending: string[] = [];
-let running = false;
+
+/**
+ * A single in-flight guard shared by BOTH the write-sync (runSync) and the pull loop (pullActive),
+ * so at most one git operation ever touches the vault repo at a time. Two concurrent git ops on one
+ * repo mean index.lock contention and half-finished rebases; worse, under load the piled-up child
+ * processes exhaust the container's fork()/thread budget, which makes libuv abort the whole process
+ * (the SIGABRT + "getaddrinfo() thread failed to start" crash loop). Serializing pins the live git
+ * subprocess count at one. If the lock is held, the caller skips (pull loop) or reschedules
+ * (write-sync) instead of stacking more work on top.
+ */
+let gitBusy = false;
+async function withGitLock<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  if (gitBusy) return undefined;
+  gitBusy = true;
+  try {
+    return await fn();
+  } finally {
+    gitBusy = false;
+  }
+}
 
 /**
  * The vault dir ONLY when it's safe to run git there: it must be its OWN repo root (a `.git`
@@ -61,40 +80,38 @@ export function requestSync(reason: string): void {
 }
 
 async function runSync(): Promise<void> {
-  if (running) {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(runSync, 2500);
-    return;
-  }
-  running = true;
   const reasons = pending;
   pending = [];
-  try {
-    const dir = gitVaultDir(); // may have changed since the debounce fired
-    if (!dir) return;
-    const g = simpleGit(dir);
-    await g.add(["-A"]);
-    const status = await g.status();
-    if (status.files.length === 0) {
-      running = false;
-      return;
-    }
-    const { name, email } = gitAuthor();
-    await g.env(commitEnv(name, email)).commit(`brain: ${reasons.length} change(s) — ${reasons.slice(0, 3).join("; ")}`);
+  const ran = await withGitLock(async () => {
     try {
-      await g.pull(["--rebase", "--autostash"]);
+      const dir = gitVaultDir(); // may have changed since the debounce fired
+      if (!dir) return;
+      const g = simpleGit(dir);
+      await g.add(["-A"]);
+      const status = await g.status();
+      if (status.files.length === 0) return;
+      const { name, email } = gitAuthor();
+      await g.env(commitEnv(name, email)).commit(`brain: ${reasons.length} change(s) — ${reasons.slice(0, 3).join("; ")}`);
+      try {
+        await g.pull(["--rebase", "--autostash"]);
+      } catch (e) {
+        console.error("[git] pull failed", e);
+      }
+      try {
+        await g.push();
+      } catch (e) {
+        console.error("[git] push failed", e);
+      }
     } catch (e) {
-      console.error("[git] pull failed", e);
+      console.error("[git] sync failed", e);
     }
-    try {
-      await g.push();
-    } catch (e) {
-      console.error("[git] push failed", e);
-    }
-  } catch (e) {
-    console.error("[git] sync failed", e);
-  } finally {
-    running = false;
+  });
+  if (ran === undefined) {
+    // The lock was held by a pull. The changed files are still dirty on disk, so don't drop them:
+    // re-queue the reasons and retry once the repo is free.
+    pending.unshift(...reasons);
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(runSync, 2500);
   }
 }
 
@@ -118,20 +135,23 @@ export async function syncStatus() {
 export async function pullActive(): Promise<{ ok: boolean; changed: boolean; error?: string }> {
   const active = getActive();
   if (!active) return { ok: true, changed: false };
-  const dir = activeVaultDir();
-  try {
-    const g = simpleGit(dir);
-    const before = await g.revparse(["HEAD"]).catch(() => "");
-    await g.fetch();
-    await g.pull(["--rebase", "--autostash"]);
-    const after = await g.revparse(["HEAD"]).catch(() => "");
-    const changed = before !== after;
-    if (changed) rebuildIndex();
-    return { ok: true, changed };
-  } catch (e) {
-    console.error("[git] pull failed", e);
-    return { ok: false, changed: false, error: e instanceof Error ? e.message : String(e) };
-  }
+  const result = await withGitLock(async () => {
+    const dir = activeVaultDir();
+    try {
+      const g = simpleGit(dir);
+      const before = await g.revparse(["HEAD"]).catch(() => "");
+      await g.pull(["--rebase", "--autostash"]); // pull already fetches — a separate g.fetch() only doubles the child processes
+      const after = await g.revparse(["HEAD"]).catch(() => "");
+      const changed = before !== after;
+      if (changed) rebuildIndex();
+      return { ok: true, changed };
+    } catch (e) {
+      console.error("[git] pull failed", e);
+      return { ok: false, changed: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+  // undefined = a sync was already in flight; a skipped tick is not an error.
+  return result ?? { ok: true, changed: false };
 }
 
 export interface ActivityEntry {
@@ -260,12 +280,23 @@ export async function commitChanges(hash: string): Promise<CommitDetail | null> 
   }
 }
 
-let pullTimer: ReturnType<typeof setInterval> | null = null;
-/** Poll the remote for the active vault so the brain stays fresh without a redeploy. */
-export function startPullLoop(intervalMs = 30_000): void {
+let pullTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Poll the remote for the active vault so the brain stays fresh without a redeploy. Self-reschedules
+ * instead of using setInterval: the next tick is queued only after the current pull settles, so a
+ * slow pull can never overlap the next one. On failure it backs off exponentially (30s healthy →
+ * capped ~16min) so a network/DNS blip can't become a tight retry loop that spawns git processes
+ * faster than they exit — the pile-up that aborted the process.
+ */
+export function startPullLoop(baseMs = 30_000): void {
   if (pullTimer) return;
-  pullTimer = setInterval(() => {
-    pullActive().catch(() => {});
-  }, intervalMs);
+  let failures = 0;
+  const tick = async () => {
+    const res = await pullActive().catch(() => ({ ok: false as const }));
+    failures = res.ok ? 0 : Math.min(failures + 1, 5);
+    pullTimer = setTimeout(tick, baseMs * 2 ** failures);
+    pullTimer.unref?.();
+  };
+  pullTimer = setTimeout(tick, baseMs);
   pullTimer.unref?.();
 }
