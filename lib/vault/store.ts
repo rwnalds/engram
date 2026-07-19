@@ -113,7 +113,16 @@ function recomputeLinks(s: IndexState): void {
       s.duplicateStems.set(slug, dupes);
     }
   }
+  // Only warn when something actually links to the ambiguous stem. Two notes sharing a
+  // filename nothing references is harmless (every vault has a few READMEs), and warning
+  // unconditionally reprints on every reindex — which buries the cases that DO silently
+  // misresolve a link. The full set stays in s.duplicateStems for the integrity report.
+  const linkedStems = new Set<string>();
+  for (const stems of s.linksBySource.values()) {
+    for (const stem of stems) linkedStems.add(stem);
+  }
   for (const [slug, paths] of s.duplicateStems) {
+    if (!linkedStems.has(slug)) continue;
     console.warn(`[vault] duplicate stem "${slug}" (${paths.join(", ")}) — wikilinks resolve to the first.`);
   }
 
