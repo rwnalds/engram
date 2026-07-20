@@ -36,12 +36,21 @@ powers full-text search + a wikilink **knowledge graph**.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/engram?referralCode=PEidIe&utm_medium=integration&utm_source=template&utm_campaign=generic)
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/rwnalds/engram)
+
+[![CI](https://github.com/rwnalds/engram/actions/workflows/ci.yml/badge.svg)](https://github.com/rwnalds/engram/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](./LICENSE)
+[![Docker](https://img.shields.io/badge/ghcr.io-engram-black?logo=docker&logoColor=white)](https://github.com/rwnalds/engram/pkgs/container/engram)
 
 > **Opinionated about _how_ it stores memory** — git-backed markdown, no database, agents write (not
 > just read), self-hosted. **Unopinionated about _what_ you keep in it** — any markdown vault, any folder
 > structure, any MCP client. Point it at a fresh repo or your existing **Obsidian vault**: no import
 > step, no lock-in.
+
+---
+
+**[What it's for](#what-its-for)** · **[How it compares](#how-it-compares)** · **[Features](#features)** ·
+**[Works with](#works-with)** · **[Quick start](#quick-start)** · **[MCP tools](#mcp-tools)** ·
+**[Deploy](#deploy)** · **[FAQ](#faq)** · **[Contributing](#contributing)**
 
 ---
 
@@ -55,6 +64,33 @@ powers full-text search + a wikilink **knowledge graph**.
 - **A self-hosted, Obsidian-compatible second brain** exposed over MCP — your notes, your server, your git repo.
 - **Memory you can see, not a black box** — a dashboard to search, watch (with diffs), and curate what your agents remember.
 - **Markdown RAG without the vector database** — full-text search + a link graph over human-readable files.
+
+## How it compares
+
+Most agent memory is built to answer *"what did I store about this?"* Engram is built to answer
+*"what is still true about this?"* — a different question, and the one that bites when an agent
+quotes a price you retired months ago.
+
+| | **Engram** | Vector-store memory<br><sub>(mem0, Zep, …)</sub> | Markdown memory<br><sub>(Basic Memory, …)</sub> | Plain RAG over docs |
+|---|---|---|---|---|
+| **Storage** | markdown files, git is the database | embeddings in a vector DB | markdown files | embeddings in a vector DB |
+| **Ranking** | relevance **× authority** | similarity | relevance | similarity |
+| **Knows a fact is retired** | ✅ `superseded_by` + `valid_until`, enforced at search | — | — | — |
+| **Explains what it withheld** | ✅ `excluded[]` with a reason per note | — | — | — |
+| **Retire + replace atomically** | ✅ `brain_supersede`, one commit | — | — | — |
+| **Refuses contradicting writes** | ✅ at write time, not read time | — | — | n/a (read-only) |
+| **Audit trail** | ✅ git, per-write attribution, per-file diffs | varies | git, if you commit | — |
+| **Per-agent access control** | ✅ read / write token scopes | varies | — | — |
+| **Human UI** | ✅ dashboard, search, diffs, graph | varies | — | — |
+| **Runs on** | your box, one container | mostly hosted SaaS | your box | your box |
+
+The row that matters is the third one. Similarity search cannot tell a contradiction from a
+duplicate — a retired price and a live one are textually identical, so the retired one often
+*outranks* the live one by being longer and more detailed. That can't be fixed at read time, which
+is why Engram writes the retirement down when it happens.
+
+<sub>Categories, not feature-by-feature audits of specific products, and accurate to the best of my
+knowledge as of July 2026. If something here misrepresents a tool you maintain, open a PR — I'll fix it.</sub>
 
 ## Features
 
@@ -74,6 +110,12 @@ powers full-text search + a wikilink **knowledge graph**.
   **`brain_supersede`** retires the old fact and links the new one in a single commit, so add-and-retire
   can't drift apart. This is the difference between an agent that *remembers* and one that knows what's
   **still true**.
+- **Write-time contradiction guards** — authority ranking fixes *reading*; these stop the vault
+  accepting the contradiction in the first place. Engram refuses to create a second live note on a
+  subject a live note already covers (the `acme-pricing-2026.md`-beside-`acme-pricing.md` bug) and
+  points the agent at `brain_supersede` instead; refuses to overwrite a note the caller hasn't read;
+  and warns when a `status:` isn't a word the ranking model knows, so a typo can't silently strip a
+  note's authority.
 - **Audit trail + access control** — every write is attributed in **git** to the token or human that
   made it, with expandable **per-file diffs** in the activity feed. Give an agent a **read-only token**
   and it never even sees the write tools; a **write** token can create, edit, move, and archive.
@@ -189,6 +231,13 @@ default** (even if it's `locked`). Or set **`valid_until: 2026-12-31`** on a not
 Retired matches don't vanish silently: `brain_search` returns them in an **`excluded`** list with a
 reason (`"expired 2026-06-01"`), so the agent can say *what it ignored and why* instead of quoting it.
 
+**What stops an agent just adding a second, contradicting note?**
+Engram refuses the write. Told "the price is now X", an agent that can't overwrite a note it never
+read will happily *add* `acme-pricing-2026.md` next to `acme-pricing.md` — nothing is corrupted, and
+you now have two live notes disagreeing about one number. That write is rejected with a pointer to
+`brain_supersede`, which retires the old note and adds the new one in a single commit. Pass
+`allow_conflict: true` when both notes genuinely belong.
+
 **How do I know what an agent changed?**
 Every write is committed to git attributed to the token or human behind it, and the dashboard's
 activity feed shows per-file diffs — a built-in audit trail for autonomous agents.
@@ -216,6 +265,22 @@ full history.
 
 **Where does it run / is it self-hosted?**
 You host it. One Docker container on Railway / Render / Fly / any VM with a volume. Your keys, your data.
+
+## Contributing
+
+Issues and PRs welcome — especially where the validity model breaks against a vault shaped
+differently from mine.
+
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** — setup, conventions, and the pre-PR checklist.
+- **[docs/curator.md](./docs/curator.md)** — how the optional Curator agent loop works.
+- **[SECURITY.md](./SECURITY.md)** — please report vulnerabilities privately, not as an issue.
+
+```bash
+bun install && bun dev
+bun test          # the ranking/authority suite, incl. the stale-truth fixtures
+```
+
+If Engram is useful to you, **starring the repo** genuinely helps other people find it.
 
 ## Stack
 

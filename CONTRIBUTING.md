@@ -22,7 +22,7 @@ Point it at your own vault: `VAULT_DIR=/path/to/vault bun dev`.
 - base-ui primitives have **no `asChild`**.
 - Next 16 route handlers: `params` is a **Promise** (`const { path } = await params`).
 - **Files are the source of truth** — there is no database. The vault is markdown; app state
-  (tokens, workspaces, settings) lives under `CORTEX_DATA_DIR`/`ENGRAM_DATA_DIR`, never inside a vault.
+  (tokens, workspaces, settings) lives under `ENGRAM_DATA_DIR`, never inside a vault.
 - The MCP layer exposes **only** vault tools — never repo/workspace/GitHub internals.
 - Match the surrounding code's naming, comment density, and idiom.
 
@@ -31,7 +31,7 @@ Point it at your own vault: `VAULT_DIR=/path/to/vault bun dev`.
 1. `bun run lint` and `bun run build` both pass (CI runs these on every PR).
 2. **Verify in the running app**, not just in theory — drive the actual flow you changed.
 3. Update docs (`README.md`, `DEPLOY.md`, `.env.example`) if you changed behavior or config.
-4. Never commit secrets, tokens, or real vault content. `.cortex-data` / `.engram-data` are gitignored.
+4. Never commit secrets, tokens, or real vault content. `.engram-data` is gitignored.
 
 ## Scope
 

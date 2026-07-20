@@ -4,15 +4,12 @@ Engram deploys as one container (this repo). Vault repos are **connected in the 
 (Workspaces) — no repo lives in this repo, and no laptop keeps a vault copy. The active
 workspace is what the dashboard shows and what agents read/write.
 
-## 1. Push this repo to GitHub
-Already a git repo — create a remote and push `main`.
-
-## 2. Dashboard login — Google OAuth
+## 1. Dashboard login — Google OAuth
 1. Google Cloud Console → Credentials → Create OAuth client ID → Web application.
 2. Redirect URI: `https://<your-app>.up.railway.app/api/auth/callback`
 3. Copy the Client ID + Secret.
 
-## 3. Railway
+## 2. Railway
 1. **New Project → Deploy from GitHub repo** → this repo (builds via root `Dockerfile`).
 2. **Add a Volume**, mount path `/data`.
 3. **Variables** — only these five are required on the host; the rest are optional and
@@ -24,7 +21,7 @@ Already a git repo — create a remote and push `main`.
 | `AUTH_SECRET` | `openssl rand -base64 32`, or Railway "Generate" |
 | `APP_URL` | `https://<your-app>.up.railway.app` |
 | `ALLOWED_EMAILS` | comma-separated team emails (Google login) |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | from step 2 |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | from step 1 |
 
 Deploy, then sign in with Google. These five bootstrap **auth + infra** — they gate login
 itself (or say where state lives), so they can't live behind the login and must be env.
@@ -42,12 +39,12 @@ Note `ARCHIVE_FOLDERS` (default `archive,archives,_archive,trash`): notes in the
 demoted in search and excluded from agent results by default — how you retire a note without
 deleting it.
 
-## 4. Connect a vault repo (in the dashboard → Workspaces)
+## 3. Connect a vault repo (in the dashboard → Workspaces)
 Two ways — pick one:
 
 - **URL + token (zero setup):** paste the repo URL + a GitHub token with access. Works with
   no GitHub OAuth app — the simplest path, especially for self-hosting.
-- **Connect GitHub (nicer):** if you set the GitHub OAuth app in step 5, click *Connect GitHub*
+- **Connect GitHub (nicer):** if you set the GitHub OAuth app in step 4, click *Connect GitHub*
   and pick a repo from a list.
 
 Add repos, switch the active one, remove — all in the UI. MCP tokens (per teammate/agent) are
@@ -55,7 +52,7 @@ created on the **Connect** page, each **`read` or `write`** scope. A read-only t
 call the write tools — give one to an agent you don't want mutating the vault. Every write is
 recorded in the git log with which token or human caused it.
 
-## 5. (Optional) GitHub OAuth app — for the "Connect GitHub" flow
+## 4. (Optional) GitHub OAuth app — for the "Connect GitHub" flow
 Each deployment uses **its own** GitHub OAuth app (secrets can't be shared, and the callback is
 host-specific — so there's no shared central app for self-hosters):
 1. GitHub → Settings → Developer settings → **OAuth Apps → New OAuth App**.
@@ -63,9 +60,9 @@ host-specific — so there's no shared central app for self-hosters):
 3. Paste the Client ID / Secret into the dashboard **Settings → GitHub** (or set
    `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` in Railway — the Settings value wins).
 
-Skip this entirely if you use the URL + token path in step 4.
+Skip this entirely if you use the URL + token path in step 3.
 
-## 6. Connect agents to the MCP
+## 5. Connect agents to the MCP
 Dashboard → **Connect** → copy the command. Agents always hit the same endpoint and only ever
 see the **active** vault:
 ```bash

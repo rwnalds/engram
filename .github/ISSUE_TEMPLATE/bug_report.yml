@@ -1,0 +1,65 @@
+name: Bug report
+description: Something doesn't work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing. Please don't paste real vault content, tokens, or secrets —
+        redact anything private. Security issues go through
+        [private reporting](https://github.com/rwnalds/engram/security/advisories/new) instead.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The tool call, the note's frontmatter, or the clicks that trigger it.
+      placeholder: |
+        1. brain_write with path "..." and frontmatter "..."
+        2. brain_search for "..."
+        3. Expected the live note, got the superseded one
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where?
+      multiple: true
+      options:
+        - MCP over HTTP (hosted dashboard)
+        - MCP over stdio (local)
+        - Dashboard UI
+        - Curator / brain_capture
+        - Deploy (Railway / Render / Docker)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: Claude Code, Claude Desktop, Cursor, Cline, ...
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag, image tag, or commit SHA.
+      placeholder: v0.1.0 / ghcr.io/rwnalds/engram:0.1.0 / main@abc1234
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: Pasted here it's automatically formatted as code — no backticks needed.
+      render: shell

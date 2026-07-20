@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest something Engram should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Engram is opinionated about a small number of things — files are the source of truth,
+        git is the database, and "still true" is written down at write time rather than inferred
+        at read time. Proposals that fit that grain are much likelier to land.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: The situation, not the solution. What did an agent get wrong, or what couldn't you do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Search / ranking / authority
+        - Write path (conflicts, supersession, validation)
+        - Frontmatter schema
+        - MCP tools
+        - Dashboard UI
+        - Auth / tokens
+        - Deploy / self-hosting
+        - Obsidian compatibility
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you've tried, or prior art
+      description: Existing tools, workarounds, or how another project solves it.

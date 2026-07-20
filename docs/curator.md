@@ -16,7 +16,7 @@ any token with `write` scope, in every Curator mode, including `off`.
 | Scope | Sees | Can |
 |---|---|---|
 | `read` | 8 tools | search, read, list, tree, backlinks, graph, recent, schema |
-| `write` | 14 tools | everything above, plus create, edit, append, move, delete |
+| `write` | 15 tools | everything above, plus write, edit, append, move, supersede, create-folder, delete (`brain_capture` makes 16 when the Curator is `full`) |
 
 A read-only token never *sees* the write tools in `tools/list`, so the model is never tempted and
 never wastes a turn discovering it is forbidden. Calling one anyway returns a clear error.

@@ -1,0 +1,4 @@
+# Collapse the three identities this repo was authored under into one.
+# Affects `git shortlog`, `git log`, and GitHub's blame/history views.
+Ronalds Palacis <66126144+rwnalds@users.noreply.github.com> <ronalds.palacis@gmail.com>
+Ronalds Palacis <66126144+rwnalds@users.noreply.github.com> <ronalds@klyiro.com>

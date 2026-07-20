@@ -2,6 +2,15 @@
   "name": "engram",
   "version": "0.1.0",
   "private": true,
+  "author": "rwnalds",
+  "homepage": "https://github.com/rwnalds/engram#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rwnalds/engram.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rwnalds/engram/issues"
+  },
   "description": "Engram — a self-hosted MCP server + dashboard that gives Claude Code, Cursor, and Hermes agents shared long-term memory over a git-backed markdown vault. An agent-native second brain.",
   "keywords": [
     "mcp",
