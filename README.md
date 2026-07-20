@@ -89,6 +89,13 @@ duplicate — a retired price and a live one are textually identical, so the ret
 *outranks* the live one by being longer and more detailed. That can't be fixed at read time, which
 is why Engram writes the retirement down when it happens.
 
+<p align="center">
+  <img src="assets/screenshot-note.png" alt="Engram dashboard showing a note marked locked, superseding an earlier pricing note, with backlinks" width="900" />
+</p>
+
+<p align="center"><sub>This exact pair ships in <code>sample-vault/</code>. Run <code>bun dev</code>, search <code>acme price</code>,
+and watch the retired note get withheld with a reason.</sub></p>
+
 <sub>Categories, not feature-by-feature audits of specific products, and accurate to the best of my
 knowledge as of July 2026. If something here misrepresents a tool you maintain, open a PR — I'll fix it.</sub>
 

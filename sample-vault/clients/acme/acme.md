@@ -17,7 +17,9 @@ Example client note. Referred by [[ada-lovelace]]. Using [[engram]] as their tea
 |---|---|
 | Plan | Pilot |
 | Started | 2026-01-15 |
+| Pricing | see [[acme-pricing-2026]] |
 
 ## Connected to
 - [[ada-lovelace]] — main contact
 - [[engram]] — what we're building for them
+- [[acme-pricing-2026]] — current pricing (supersedes [[acme-pricing]])
