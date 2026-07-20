@@ -11,11 +11,37 @@ import { ARCHIVE_FOLDERS } from "@/lib/config";
 export type Authority = "authoritative" | "current" | "provisional" | "superseded" | "archived";
 
 /** Status/tag words that mark a note as the source of truth for whatever it covers. */
-const AUTHORITATIVE = ["locked", "canonical", "source-of-truth", "authoritative"];
+export const AUTHORITATIVE = ["locked", "canonical", "source-of-truth", "authoritative"];
 /** Words that mark a note as no longer true. */
-const SUPERSEDED = ["superseded", "deprecated", "obsolete", "replaced", "retired", "dead"];
+export const SUPERSEDED = ["superseded", "deprecated", "obsolete", "replaced", "retired", "dead"];
 /** Words that mark a note as not yet decided. A `proposed` decision is not a decision. */
-const PROVISIONAL = ["draft", "proposed", "exploring", "tentative", "wip", "idea"];
+export const PROVISIONAL = ["draft", "proposed", "exploring", "tentative", "wip", "idea"];
+
+/**
+ * Words that carry no authority but are common, legitimate `status:` values. Listing them keeps
+ * the typo check quiet about statuses a vault is entitled to use — `active` means `current`, and
+ * saying so is not a mistake.
+ */
+export const NEUTRAL_STATUS = ["current", "active", "live", "done", "complete", "completed", "open", "in-progress", "ongoing", "published"];
+
+/** Every status word the ranking model recognises or tolerates. */
+export function knownStatusWords(): string[] {
+  return [...AUTHORITATIVE, ...SUPERSEDED, ...PROVISIONAL, ...NEUTRAL_STATUS];
+}
+
+/**
+ * True when `status:` contains no word the ranking model recognises.
+ *
+ * A typo here fails silently and expensively: `status: lokced` matches nothing, so the note falls
+ * through to `current` and a document meant to be the source of truth ranks as an ordinary one —
+ * the exact failure the authority model exists to prevent, reintroduced by a transposition. There
+ * is no correct list of statuses for every vault, so this warns rather than refuses.
+ */
+export function isUnrecognizedStatus(status: string | undefined): boolean {
+  const v = (status ?? "").trim().toLowerCase();
+  if (v === "") return false;
+  return !knownStatusWords().some((w) => hasWord(v, w));
+}
 
 /** Multiplier applied to a note's search score. Files are truth; this only reorders hits. */
 const WEIGHT: Record<Authority, number> = {

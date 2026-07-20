@@ -2,9 +2,10 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
 import { activeVaultDir } from "@/lib/repos";
-import { refreshPaths } from "./store";
+import { refreshPaths, getNote } from "./store";
 import { humanize, stemOf } from "./parse";
 import { checkFrontmatter, frontmatterErrorMessage } from "./validate";
+import { guardConflict } from "./conflict";
 import { requestSync } from "@/lib/git";
 import { currentActor } from "@/lib/actor";
 
@@ -44,6 +45,12 @@ export interface WriteOpts {
    * A human in the editor is looking at what they're deleting; an agent usually is not.
    */
   allowShrink?: boolean;
+  /**
+   * Permit creating a note that duplicates a live note's subject. Default false for agents.
+   * See `guardConflict` — the common failure is an agent adding a second live price note
+   * instead of superseding the first.
+   */
+  allowConflict?: boolean;
 }
 
 /** An existing note this size or larger is worth protecting from an accidental truncation. */
@@ -77,6 +84,37 @@ async function guardTruncation(abs: string, relPath: string, next: string, allow
   );
 }
 
+/**
+ * Structural read-before-overwrite. Not a size heuristic like `guardTruncation` — this refuses the
+ * write outright until the caller has actually opened the note, so a same-size clobber is caught
+ * too. Returns an error message for the model, or null to proceed.
+ *
+ * Shared by the Curator loop (which tracks reads per run) and the MCP tools (which track them per
+ * caller — see lib/mcp/session.ts). It used to live only in the loop, which left the surface that
+ * matters most, a coding agent writing over MCP, protected by the size heuristic alone.
+ */
+export function guardOverwrite(toolName: string, target: string, hasRead: (p: string) => boolean): string | null {
+  if (toolName !== "brain_write" && toolName !== "brain_edit") return null;
+  if (!target || hasRead(target)) return null;
+  let exists = false;
+  try {
+    exists = getNote(normalizeNotePath(target)) !== null;
+  } catch {
+    return null;
+  }
+  if (!exists) return null;
+  return `${target} already exists and you have not read it in this session. Call brain_read("${target}") first, then write back the full content you intend to keep — or use brain_append to add to it.`;
+}
+
+async function fileExists(abs: string): Promise<boolean> {
+  try {
+    await fsp.access(abs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Write a note from a raw markdown string (frontmatter included). Used by the editor. */
 export async function writeNoteRaw(relPath: string, content: string, opts: WriteOpts = {}): Promise<string> {
   const p = normalizeNotePath(relPath);
@@ -85,6 +123,9 @@ export async function writeNoteRaw(relPath: string, content: string, opts: Write
     if (!check.ok) throw new Error(frontmatterErrorMessage(p, check.error!));
   }
   const abs = safeAbs(p);
+  // Agents only. A human in the editor who names a note `pricing-2026` next to `pricing` can see
+  // both in the sidebar and meant it; an agent usually has not looked.
+  if (opts.strict) guardConflict(p, !(await fileExists(abs)), opts.allowConflict === true);
   await guardTruncation(abs, p, content, opts.allowShrink === true);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   await fsp.writeFile(abs, content, "utf8");

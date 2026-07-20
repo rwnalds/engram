@@ -3,7 +3,7 @@ import { harnessEnabled } from "@/lib/settings";
 import { hasAnyToken, resolveToken, type TokenScope } from "@/lib/tokens";
 import { oauthEnabled, verifyAccessToken, wwwAuthenticate } from "@/lib/oauth";
 import { withActor } from "@/lib/actor";
-import { TOOLS, TOOL_MAP } from "@/lib/mcp/tools";
+import { TOOL_MAP, visibleTools } from "@/lib/mcp/tools";
 
 export const dynamic = "force-dynamic";
 
@@ -42,14 +42,7 @@ async function handleMessage(msg: Json, caller: Caller): Promise<Json | null> {
     case "ping":
       return rpc(id, {});
     case "tools/list": {
-      // A read-only token never sees the write tools — it cannot be tempted to call them,
-      // and the model never wastes a turn discovering it is forbidden.
-      // The auto-filing harness stays hidden unless it's turned on (agents file notes themselves).
-      const tools = TOOLS.filter((t) => {
-        if (t.name === "brain_capture" && !harnessEnabled()) return false;
-        if (t.write && caller.scope !== "write") return false;
-        return true;
-      });
+      const tools = visibleTools(caller.scope === "write", harnessEnabled());
       return rpc(id, {
         tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       });

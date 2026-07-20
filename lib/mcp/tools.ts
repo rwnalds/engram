@@ -9,17 +9,20 @@ import {
   searchNotes,
   vaultConventions,
 } from "@/lib/vault/store";
-import { effectiveAuthority } from "@/lib/vault/authority";
+import { effectiveAuthority, isUnrecognizedStatus, knownStatusWords } from "@/lib/vault/authority";
 import { extractSection, listHeadings } from "@/lib/vault/parse";
 import {
   appendNote,
   createFolder,
   deleteNote,
+  guardOverwrite,
   moveNote,
+  normalizeNotePath,
   supersedeNote,
   writeNote,
   writeNoteRaw,
 } from "@/lib/vault/write";
+import { hasRead, recordRead } from "./session";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Args = Record<string, any>;
@@ -52,7 +55,8 @@ async function writeFromArgs(a: Args): Promise<string> {
   const raw = contentStr.trim() !== "" ? contentStr : !hasFm && bodyStr.trim().startsWith("---") ? bodyStr : "";
   // strict: an agent that hand-writes unparseable YAML is refused, not silently accepted.
   // allowShrink: only when the caller explicitly says it means to replace the note.
-  const opts = { strict: true, allowShrink: a.overwrite === true };
+  // allowConflict: only when the caller says a near-duplicate note is deliberate.
+  const opts = { strict: true, allowShrink: a.overwrite === true, allowConflict: a.allow_conflict === true };
   if (raw.trim() !== "") return writeNoteRaw(p, raw, opts);
   if (bodyStr.trim() !== "" || hasFm) return writeNote(p, bodyStr, fm, opts);
   throw new Error(
@@ -61,11 +65,16 @@ async function writeFromArgs(a: Args): Promise<string> {
 }
 
 /**
- * Report a write, warning loudly when the note's YAML did not survive the round-trip.
- * Unparseable frontmatter is silently discarded on read, so a note claiming `status: locked`
- * would rank as an ordinary note forever. The agent that wrote it should hear about it now.
+ * Report a write, warning loudly when the note's frontmatter will not do what the writer meant.
+ * Both failures here are silent on read: unparseable YAML is discarded wholesale, and an
+ * unrecognised `status:` falls through to `current`. Either way a note claiming to be the source
+ * of truth ranks as an ordinary one. The agent that wrote it should hear about it now.
  */
-async function writeResult(a: Args) {
+async function writeResult(a: Args, toolName: string) {
+  // Read-before-overwrite. The Curator loop has enforced this for a while; over MCP a coding agent
+  // could still clobber a note it had never opened, protected only by the size heuristic in write.ts.
+  const blocked = guardOverwrite(toolName, a.path ? normalizeNotePath(String(a.path)) : "", hasRead);
+  if (blocked) throw new Error(blocked);
   const p = await writeFromArgs(a);
   const n = getNote(p);
   if (n?.frontmatterError) {
@@ -73,6 +82,13 @@ async function writeResult(a: Args) {
       ok: true,
       path: p,
       warning: `Frontmatter was written but cannot be parsed (${n.frontmatterError}). Its status, tags and title are being ignored. Usual cause: an unquoted ":" in a value — quote it, e.g. title: "Decision: X". Re-write the note to fix.`,
+    };
+  }
+  if (isUnrecognizedStatus(n?.status)) {
+    return {
+      ok: true,
+      path: p,
+      warning: `status: "${n?.status}" is not a status this vault's ranking model recognises, so the note is being treated as plain \`current\`. If you meant it to outrank or be outranked by others, use one of: ${knownStatusWords().join(", ")}. Check for a typo.`,
     };
   }
   return { ok: true, path: p };
@@ -151,7 +167,12 @@ export const TOOLS: Tool[] = [
               }
             : {}),
       };
-      if (!section) return { ...base, content: n.raw };
+      // Only a full read authorises a later overwrite. A section read shows you one heading, not
+      // what you would destroy — so it deliberately does not unlock brain_write/brain_edit.
+      if (!section) {
+        recordRead(n.path);
+        return { ...base, content: n.raw };
+      }
 
       const found = extractSection(n.body, String(section));
       if (found === null) {
@@ -221,7 +242,8 @@ export const TOOLS: Tool[] = [
     name: "brain_write",
     write: true,
     description:
-      "Create or overwrite a note. PREFER `body` (markdown, no frontmatter) + `frontmatter` (an object): the YAML is serialised for you and always parses. Hand-writing frontmatter into `content` risks invalid YAML — a note whose frontmatter fails to parse loses its status, tags and title on every read, so a note claiming `status: locked` would rank as an ordinary one. Such a write is REJECTED. Follow SCHEMA.md: kebab-case path, dated names for daily/decisions, frontmatter with title/type/tags/status. Path vault-relative (e.g. decisions/foo-2026-07-09.md).",
+      "Create or overwrite a note. PREFER `body` (markdown, no frontmatter) + `frontmatter` (an object): the YAML is serialised for you and always parses. Hand-writing frontmatter into `content` risks invalid YAML — a note whose frontmatter fails to parse loses its status, tags and title on every read, so a note claiming `status: locked` would rank as an ordinary one. Such a write is REJECTED. Follow SCHEMA.md: kebab-case path, dated names for daily/decisions, frontmatter with title/type/tags/status. Path vault-relative (e.g. decisions/foo-2026-07-09.md).\n\n" +
+      "WHEN A FACT CHANGED, DON'T CREATE A DATED SIBLING. Writing `acme-pricing-2026.md` next to a live `acme-pricing.md` leaves two live notes disagreeing about one number, and the older one usually matches the query better — this is exactly how a retired price gets quoted. Such a write is REJECTED; use brain_supersede instead, which retires the old note and adds the new one in a single commit. `allow_conflict: true` overrides it when both notes genuinely belong.",
     inputSchema: {
       type: "object",
       properties: {
@@ -230,10 +252,11 @@ export const TOOLS: Tool[] = [
         frontmatter: { type: "object", description: "YAML frontmatter object: title, type, tags, status, related, ..." },
         content: s("full raw markdown incl. frontmatter — alternative to body+frontmatter"),
         overwrite: { type: "boolean", description: "confirm you mean to replace an existing note with much shorter content (default false)" },
+        allow_conflict: { type: "boolean", description: "confirm a near-duplicate of a live note is deliberate — prefer brain_supersede (default false)" },
       },
       required: ["path"],
     },
-    handler: async (a) => await writeResult(a),
+    handler: async (a) => await writeResult(a, "brain_write"),
   },
   {
     name: "brain_edit",
@@ -248,10 +271,11 @@ export const TOOLS: Tool[] = [
         body: s("markdown body (alternative to content; pair with `frontmatter`)"),
         frontmatter: { type: "object", description: "YAML frontmatter object (with `body`)" },
         overwrite: { type: "boolean", description: "confirm you mean to replace an existing note with much shorter content (default false)" },
+        allow_conflict: { type: "boolean", description: "confirm a near-duplicate of a live note is deliberate — prefer brain_supersede (default false)" },
       },
       required: ["path"],
     },
-    handler: async (a) => await writeResult(a),
+    handler: async (a) => await writeResult(a, "brain_edit"),
   },
   {
     name: "brain_append",
@@ -335,3 +359,21 @@ export const TOOLS: Tool[] = [
 ];
 
 export const TOOL_MAP = new Map(TOOLS.map((t) => [t.name, t]));
+
+/**
+ * The tools a caller may see, given its scope.
+ *
+ * A read-only token never sees the write tools — it cannot be tempted to call them, and the model
+ * never wastes a turn discovering it is forbidden. This is a claim the README, DEPLOY.md and
+ * docs/curator.md all make out loud, so it lives here as one function the route calls and the
+ * tests can pin, rather than as a filter expression inline in a request handler.
+ *
+ * The auto-filing harness stays hidden unless it's turned on — agents file notes themselves.
+ */
+export function visibleTools(canWrite: boolean, harnessOn: boolean): Tool[] {
+  return TOOLS.filter((t) => {
+    if (t.name === "brain_capture" && !harnessOn) return false;
+    if (t.write && !canWrite) return false;
+    return true;
+  });
+}

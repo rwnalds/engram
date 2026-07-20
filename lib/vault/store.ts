@@ -6,7 +6,7 @@ import { VAULT_IGNORE } from "@/lib/config";
 import { activeVaultDir } from "@/lib/repos";
 import { scanVault } from "./scan";
 import { parseNote, stemOf } from "./parse";
-import { authorityOf, authorityRules, isArchivedPath, overlayValidity, weightOf, type Authority } from "./authority";
+import { authorityOf, authorityRules, isArchivedPath, isUnrecognizedStatus, overlayValidity, weightOf, type Authority } from "./authority";
 import type { Graph, GraphEdge, GraphNode, Note, NoteMeta, TreeNode } from "./types";
 
 interface IndexDoc {
@@ -473,6 +473,7 @@ export function vaultConventions() {
   const statuses = new Map<string, number>();
   const types = new Set<string>();
   const malformed: Array<{ path: string; error: string }> = [];
+  const unknownStatus: Array<{ path: string; status: string }> = [];
   let archived = 0;
   let superseded = 0;
   let expired = 0;
@@ -482,6 +483,7 @@ export function vaultConventions() {
     folders.add(n.folder);
     if (n.type) types.add(n.type);
     if (n.status) statuses.set(n.status, (statuses.get(n.status) ?? 0) + 1);
+    if (isUnrecognizedStatus(n.status)) unknownStatus.push({ path: n.path, status: n.status! });
     if (isArchivedPath(n.path)) archived++;
     if (n.frontmatterError) malformed.push({ path: n.path, error: n.frontmatterError });
     if (n.supersededBy) superseded++;
@@ -502,6 +504,7 @@ export function vaultConventions() {
     integrity: {
       duplicateStems: [...s.duplicateStems.entries()].map(([stem, paths]) => ({ stem, paths })),
       malformedFrontmatter: malformed,
+      unrecognizedStatus: unknownStatus,
       ...(s.duplicateStems.size > 0
         ? { duplicateStemWarning: "Wikilinks to a duplicated stem resolve to the first path only. Rename one." }
         : {}),
@@ -509,6 +512,12 @@ export function vaultConventions() {
         ? {
             malformedFrontmatterWarning:
               "These notes open with `---` but their YAML is unparseable, so their status, tags and title are being ignored — they rank as ordinary notes regardless of what they claim. Usual cause: an unquoted `:` in a value. Fix by quoting it.",
+          }
+        : {}),
+      ...(unknownStatus.length > 0
+        ? {
+            unrecognizedStatusWarning:
+              "These notes carry a `status:` the ranking model does not recognise, so they rank as plain `current` no matter what they claim. Often a typo (`lokced`), sometimes a vault convention this instance has not been told about. See ranking.statusWords for the vocabulary.",
           }
         : {}),
     },

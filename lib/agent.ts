@@ -2,8 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_CURATOR_MODEL, SUPPORTED_MODEL_IDS } from "@/lib/models";
 import { anthropicApiKey } from "@/lib/settings";
 import { TOOLS, type Tool } from "@/lib/mcp/tools";
-import { getNote, readVaultFile, vaultConventions } from "@/lib/vault/store";
-import { normalizeNotePath } from "@/lib/vault/write";
+import { readVaultFile, vaultConventions } from "@/lib/vault/store";
+import { normalizeNotePath, guardOverwrite } from "@/lib/vault/write";
 import { withActor } from "@/lib/actor";
 
 /**
@@ -109,25 +109,6 @@ const MUTATION_KIND: Record<string, keyof Manifest> = {
   brain_move: "moved",
 };
 
-function noteExists(p: string): boolean {
-  try {
-    return getNote(normalizeNotePath(String(p))) !== null;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Structural read-before-overwrite. Not a size heuristic like the one in write.ts — this refuses
- * the write outright until the loop has actually opened the note, so a same-size clobber is
- * caught too. Returns an error message for the model, or null to proceed.
- */
-export function guardOverwrite(toolName: string, target: string, readPaths: ReadonlySet<string>): string | null {
-  if (toolName !== "brain_write" && toolName !== "brain_edit") return null;
-  if (!target || !noteExists(target) || readPaths.has(target)) return null;
-  return `${target} already exists and you have not read it in this session. Call brain_read("${target}") first, then write back the full content you intend to keep — or use brain_append to add to it.`;
-}
-
 export interface AgentOpts {
   profile: AgentProfile;
   /** chat: the conversation. capture: a single user turn holding the rough dump. */
@@ -184,7 +165,7 @@ export async function* agentStream(opts: AgentOpts): AsyncGenerator<AgentEvent> 
 
     const target = typeof input.path === "string" ? normalizeNotePath(input.path) : "";
 
-    const blocked = guardOverwrite(name, target, readPaths);
+    const blocked = guardOverwrite(name, target, (p) => readPaths.has(p));
     if (blocked) return { error: blocked };
 
     const out = await withActor(opts.actor ?? "curator", () => tool.handler(input));
