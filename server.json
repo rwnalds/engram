@@ -3,7 +3,7 @@
   "name": "io.github.rwnalds/engram",
   "title": "Engram",
   "description": "Git-backed markdown memory for AI agents; search hides superseded and archived notes.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "repository": {
     "url": "https://github.com/rwnalds/engram",
     "source": "github"
@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/rwnalds/engram:0.1.0",
+      "identifier": "ghcr.io/rwnalds/engram:0.1.1",
       "transport": {
         "type": "stdio"
       },

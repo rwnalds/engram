@@ -3,6 +3,7 @@ import { harnessEnabled } from "@/lib/settings";
 import { hasAnyToken, resolveToken, type TokenScope } from "@/lib/tokens";
 import { oauthEnabled, verifyAccessToken, wwwAuthenticate } from "@/lib/oauth";
 import { withActor } from "@/lib/actor";
+import { VERSION } from "@/lib/version";
 import { TOOL_MAP, visibleTools } from "@/lib/mcp/tools";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +38,7 @@ async function handleMessage(msg: Json, caller: Caller): Promise<Json | null> {
       return rpc(id, {
         protocolVersion: params?.protocolVersion || PROTOCOL,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "engram", version: "0.1.0" },
+        serverInfo: { name: "engram", version: VERSION },
       });
     case "ping":
       return rpc(id, {});

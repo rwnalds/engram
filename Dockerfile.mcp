@@ -31,4 +31,14 @@ ENV NODE_ENV=production \
     GIT_SYNC_ENABLED=false
 
 # stdio MCP server: JSON-RPC on stdin/stdout. Nothing here may write to stdout.
-CMD ["bun", "scripts/mcp-stdio.ts"]
+#
+# ENTRYPOINT, not CMD. server.json tells clients to pass the vault as a positional argument
+# (`docker run ... <image> /vault`), and with a bare CMD that argument *replaces* the command
+# instead of appending to it — the base image's entrypoint then tries to exec /vault, a
+# directory, and the container dies with "Permission denied" before serving a single request.
+# As ENTRYPOINT the argument lands where the script expects it. Overriding the base entrypoint
+# is deliberate: this image runs exactly one program.
+#
+# Verified: `docker run -i --rm --mount type=bind,src=<vault>,dst=/vault <image> /vault`
+# answers initialize/tools/list, and a bare `docker run <image>` still serves sample-vault.
+ENTRYPOINT ["bun", "scripts/mcp-stdio.ts"]

@@ -21,11 +21,12 @@ async function main() {
   process.env.GIT_SYNC_ENABLED = "false";
 
   const { TOOLS, TOOL_MAP } = await import("@/lib/mcp/tools");
+  const { VERSION } = await import("@/lib/version");
   const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const { ListToolsRequestSchema, CallToolRequestSchema } = await import("@modelcontextprotocol/sdk/types.js");
 
-  const server = new Server({ name: "engram", version: "0.1.0" }, { capabilities: { tools: {} } });
+  const server = new Server({ name: "engram", version: VERSION }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
