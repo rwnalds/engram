@@ -6,15 +6,13 @@ import { refreshPaths, getNote } from "./store";
 import { humanize, stemOf } from "./parse";
 import { checkFrontmatter, frontmatterErrorMessage } from "./validate";
 import { guardConflict } from "./conflict";
+import { resolveInVault } from "./paths";
 import { requestSync } from "@/lib/git";
 import { currentActor } from "@/lib/actor";
 
 /** Resolve a vault-relative path to an absolute path in the active vault, refusing escapes. */
 function safeAbs(relPath: string): string {
-  const root = path.resolve(activeVaultDir());
-  const abs = path.resolve(root, relPath);
-  if (abs !== root && !abs.startsWith(root + path.sep)) throw new Error("path escapes the vault");
-  return abs;
+  return resolveInVault(activeVaultDir(), relPath);
 }
 
 export function normalizeNotePath(relPath: string): string {

@@ -7,6 +7,7 @@ import { activeVaultDir } from "@/lib/repos";
 import { scanVault } from "./scan";
 import { parseNote, stemOf } from "./parse";
 import { authorityOf, authorityRules, isArchivedPath, isUnrecognizedStatus, overlayValidity, weightOf, type Authority } from "./authority";
+import { tryResolveInVault } from "./paths";
 import type { Graph, GraphEdge, GraphNode, Note, NoteMeta, TreeNode } from "./types";
 
 interface IndexDoc {
@@ -294,7 +295,9 @@ export function listRecent(sinceMs?: number, limit = 20): NoteMeta[] {
 
 export function getNote(relPath: string): Note | null {
   const s = ensure();
-  const abs = path.join(s.dir, relPath);
+  // Caller-controlled (brain_read, the dashboard note route) — must not escape the vault.
+  const abs = tryResolveInVault(s.dir, relPath);
+  if (!abs) return null;
   let raw: string;
   try {
     raw = fs.readFileSync(abs, "utf8");
@@ -578,7 +581,9 @@ export function getTree(): TreeNode {
 /** Read a top-level meta file (SCHEMA.md / INDEX.md) from the active vault, or null. */
 export function readVaultFile(name: string): string | null {
   try {
-    return fs.readFileSync(path.join(activeVaultDir(), name), "utf8");
+    const abs = tryResolveInVault(activeVaultDir(), name);
+    if (!abs) return null;
+    return fs.readFileSync(abs, "utf8");
   } catch {
     return null;
   }

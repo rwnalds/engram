@@ -14,6 +14,10 @@
 
 <p align="center"><sub><a href="https://github.com/rwnalds/engram/blob/main/assets/demo.mp4">▶ Watch the full-length video</a> (real-time, full quality)</sub></p>
 
+<p align="center">
+  <a href="https://www.producthunt.com/products/engram-3?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-engram-4cb7e488-c380-4fa7-a2c7-0129b971c90e" target="_blank" rel="noopener noreferrer"><img alt="Engram - Agent memory that knows what's still true | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1202294&amp;theme=light&amp;t=1784627191540"></a>
+</p>
+
 ---
 
 Engram is a self-hosted **MCP server + dashboard** that gives Claude Code, Cursor, Hermes, and any
