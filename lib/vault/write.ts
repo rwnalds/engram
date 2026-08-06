@@ -147,8 +147,23 @@ export async function writeNote(
   return writeNoteRaw(relPath, content, { ...opts, strict: true });
 }
 
+/**
+ * Append text to a note, creating it if missing.
+ *
+ * Refuses an empty append. `writeNote` has always refused to create an empty note; this path did
+ * not, so an append whose payload never arrived wrote `existing + "\n"` and reported success — a
+ * blank line where a log entry should have been (the 2026-08-06 incident). An append with nothing
+ * to append is never intentional, and the write path must not be the layer that discovers this
+ * quietly.
+ */
 export async function appendNote(relPath: string, text: string): Promise<string> {
   const p = normalizeNotePath(relPath);
+  if (typeof text !== "string" || text.trim() === "") {
+    throw new Error(
+      `Nothing to append to ${p}: \`text\` was empty. Pass the markdown to append as \`text\` ` +
+        `(brain_append takes \`text\`, not \`content\` or \`body\`). The note was not modified.`,
+    );
+  }
   const abs = safeAbs(p);
   let existing = "";
   try {

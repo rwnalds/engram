@@ -5,6 +5,7 @@ import { oauthEnabled, verifyAccessToken, wwwAuthenticate } from "@/lib/oauth";
 import { withActor } from "@/lib/actor";
 import { VERSION } from "@/lib/version";
 import { TOOL_MAP, visibleTools } from "@/lib/mcp/tools";
+import { callTool } from "@/lib/mcp/call";
 
 export const dynamic = "force-dynamic";
 
@@ -62,7 +63,9 @@ async function handleMessage(msg: Json, caller: Caller): Promise<Json | null> {
       }
       try {
         // Stamp every write this call causes with the caller's name, for the git audit trail.
-        const out = await withActor(caller.name, () => tool.handler(params?.arguments ?? {}));
+        // callTool validates `arguments` against the tool's inputSchema first — a malformed call
+        // must surface as an error, never as a successful no-op write.
+        const out = await withActor(caller.name, () => callTool(tool.name, params?.arguments ?? {}));
         const text = typeof out === "string" ? out : JSON.stringify(out, null, 2);
         return rpc(id, { content: [{ type: "text", text }] });
       } catch (e) {

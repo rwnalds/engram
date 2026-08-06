@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_CURATOR_MODEL, SUPPORTED_MODEL_IDS } from "@/lib/models";
 import { anthropicApiKey } from "@/lib/settings";
 import { TOOLS, type Tool } from "@/lib/mcp/tools";
+import { validateArgs } from "@/lib/mcp/call";
 import { readVaultFile, vaultConventions } from "@/lib/vault/store";
 import { normalizeNotePath, guardOverwrite } from "@/lib/vault/write";
 import { withActor } from "@/lib/actor";
@@ -167,6 +168,13 @@ export async function* agentStream(opts: AgentOpts): AsyncGenerator<AgentEvent> 
 
     const blocked = guardOverwrite(name, target, (p) => readPaths.has(p));
     if (blocked) return { error: blocked };
+
+    // Validate against the tool's inputSchema first — a model driving this loop mixes up
+    // `text`/`content`/`body` exactly like a model driving MCP, and an unvalidated call there
+    // wrote a blank line and reported success. Returning the message (rather than throwing) keeps
+    // the loop alive so the model can correct its own call on the next turn.
+    const problem = validateArgs(tool, input);
+    if (problem) return { error: problem };
 
     const out = await withActor(opts.actor ?? "curator", () => tool.handler(input));
 
