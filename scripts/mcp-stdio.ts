@@ -14,7 +14,56 @@
  * be resolved into env BEFORE the tools module loads (config reads it at import), so imports are
  * dynamic, inside main().
  */
+/**
+ * The stdio server speaks JSON-RPC on stdin/stdout and never opens a port. Deployed to a PaaS as a
+ * web service it fails like this: it prints "ready", reads EOF from a stdin nothing is attached to,
+ * exits 0 — and the platform reports a *successful* deploy whose URL 502s forever. Nothing in the
+ * logs looks wrong, which is what makes it expensive: engram's own Railway instance sat broken on
+ * exactly this, deployed from the wrong one of the two published images.
+ *
+ * The two are not interchangeable:
+ *   ghcr.io/rwnalds/engram      stdio — Claude Desktop, Cursor, registries   (Dockerfile.mcp)
+ *   ghcr.io/rwnalds/engram-app  HTTP  — dashboard + /api/mcp, what a PaaS runs (Dockerfile)
+ *
+ * So refuse, loudly and non-zero, when we can tell we're a web service on a PaaS: a crashed deploy
+ * with an explanation beats a green one that never answers. Only unambiguous platform markers
+ * count — PORT is an ordinary local env var and must never trip this. Running the stdio server
+ * inside a deployed container is legitimate, so ENGRAM_ALLOW_STDIO_ON_PAAS=1 overrides.
+ */
+const PAAS_MARKERS: ReadonlyArray<readonly [envVar: string, platform: string]> = [
+  ["RAILWAY_ENVIRONMENT", "Railway"],
+  ["RENDER", "Render"],
+  ["FLY_APP_NAME", "Fly.io"],
+  ["DYNO", "Heroku"],
+  ["KOYEB_APP_NAME", "Koyeb"],
+];
+
+function refuseIfDeployedAsWebService() {
+  if (process.env.ENGRAM_ALLOW_STDIO_ON_PAAS) return;
+  const marker = PAAS_MARKERS.find(([envVar]) => process.env[envVar]);
+  if (!marker) return;
+
+  console.error(
+    [
+      "",
+      `[engram] Refusing to start: this is the stdio MCP image, running on ${marker[1]}.`,
+      "",
+      "  It serves JSON-RPC over stdin/stdout and never opens a port, so a web service built from",
+      "  it can only 502 — and by exiting 0 it would report a deploy that 'succeeded'.",
+      "",
+      "  Deploy the app image instead:  ghcr.io/rwnalds/engram-app:latest",
+      "    dashboard + HTTP MCP at /api/mcp · healthcheck /api/health · volume mounted at /data",
+      "",
+      "  Meant to run the stdio server inside a deployed container? Set ENGRAM_ALLOW_STDIO_ON_PAAS=1",
+      "",
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
 async function main() {
+  refuseIfDeployedAsWebService();
+
   const vaultArg = process.argv[2];
   if (vaultArg) process.env.VAULT_DIR = vaultArg;
   // Local mode: never touch git, never require an Anthropic key for introspection.

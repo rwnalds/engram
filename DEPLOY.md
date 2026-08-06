@@ -10,6 +10,12 @@ workspace is what the dashboard shows and what agents read/write.
 3. Copy the Client ID + Secret.
 
 ## 2. Railway
+
+> **Deploying from a prebuilt image rather than the repo?** Use `ghcr.io/rwnalds/engram-app:latest`
+> and set the healthcheck path to `/api/health`. The similarly-named `ghcr.io/rwnalds/engram` is the
+> **stdio** MCP server for Claude Desktop/Cursor — it speaks JSON-RPC on stdin/stdout and never opens
+> a port, so as a web service it 502s no matter what else is configured.
+
 1. **New Project → Deploy from GitHub repo** → this repo (builds via root `Dockerfile`).
 2. **Add a Volume**, mount path `/data`.
 3. **Variables** — only these five are required on the host; the rest are optional and
