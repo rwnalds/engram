@@ -2,16 +2,14 @@ import { test, expect, beforeEach } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { TEST_VAULT } from "../../test/setup";
-import { rebuildIndex, refreshPaths } from "./store";
+import { rebuildIndex, refreshPaths, vaultConventions } from "./store";
 
 /**
- * A duplicated filename stem is a permanent property of a vault's layout — no reindex resolves it.
- * The warning therefore has to be edge-triggered, because `recomputeLinks` runs on every write and
- * every watcher flush. Warning on state instead of on change is what made a 4-README vault reprint
- * the same line into the deploy log forever.
- *
- * "Already warned" is process-lifetime state, so each test below claims its OWN stem. Sharing one
- * across tests would make them order-dependent — which is the honest cost of the memo, not a bug.
+ * A duplicated filename stem is a property of the vault's layout, not an event: no reindex
+ * resolves it, and `recomputeLinks` runs on every write, every watcher flush and every rebuild.
+ * Logging it from there put the same line in the deploy log forever. It belongs in the integrity
+ * report, which is queryable on demand — so the console stays silent no matter how the index is
+ * rebuilt, and the finding is still available in full.
  */
 
 function write(rel: string, body: string) {
@@ -20,16 +18,20 @@ function write(rel: string, body: string) {
   fs.writeFileSync(abs, body);
 }
 
-function warnings(fn: () => void): string[] {
+/** Anything the vault index writes to console.warn / console.error while `fn` runs. */
+function consoleOutput(fn: () => void): string[] {
   const out: string[] = [];
-  const orig = console.warn;
+  const warn = console.warn;
+  const error = console.error;
   console.warn = (...a: unknown[]) => void out.push(a.join(" "));
+  console.error = (...a: unknown[]) => void out.push(a.join(" "));
   try {
     fn();
   } finally {
-    console.warn = orig;
+    console.warn = warn;
+    console.error = error;
   }
-  return out.filter((l) => l.includes("duplicate stem"));
+  return out;
 }
 
 /** Four notes sharing one stem, the layout that produced the original report. */
@@ -45,42 +47,44 @@ beforeEach(() => {
   fs.mkdirSync(TEST_VAULT, { recursive: true });
 });
 
-test("duplicate stems nothing links to stay silent", () => {
-  fourWay("OVERVIEW");
-  write("notes/a.md", "# A\n\nno wikilinks here\n");
-  expect(warnings(rebuildIndex)).toEqual([]);
-});
-
-test("a linked duplicate stem is reported once, not on every later reindex", () => {
+test("a linked duplicate stem is never logged — not once, not on any reindex", () => {
   fourWay("README");
   write("notes/a.md", "# A\n\nsee [[README]] for context\n");
 
-  const first = warnings(rebuildIndex);
-  expect(first).toHaveLength(1);
-  // Actionable: names the note holding the link, the winner, and what it shadows.
-  expect(first[0]).toContain("notes/a.md");
-  expect(first[0]).toContain("resolves to README.md");
-  expect(first[0]).toContain("leads/brands/README.md");
+  expect(consoleOutput(rebuildIndex)).toEqual([]);
 
-  // Unrelated writes each re-run recomputeLinks. None of them may reprint.
+  // Every write re-runs recomputeLinks; a full rebuild runs it too. All must stay silent.
   for (let i = 0; i < 3; i++) {
     write(`notes/b${i}.md`, `# B${i}\n\nunrelated\n`);
-    expect(warnings(() => refreshPaths([`notes/b${i}.md`]))).toEqual([]);
+    expect(consoleOutput(() => refreshPaths([`notes/b${i}.md`]))).toEqual([]);
   }
-  // Neither may a full rebuild.
-  expect(warnings(rebuildIndex)).toEqual([]);
+  expect(consoleOutput(rebuildIndex)).toEqual([]);
 });
 
-test("a collision that is resolved and then reintroduced warns again", () => {
-  fourWay("GUIDE");
-  write("notes/a.md", "# A\n\nsee [[GUIDE]]\n");
-  expect(warnings(rebuildIndex)).toHaveLength(1);
+test("the collision is reported in full by the integrity report instead", () => {
+  fourWay("README");
+  write("notes/a.md", "# A\n\nsee [[README]] for context\n");
+  rebuildIndex();
 
-  // Resolve it: nothing links the ambiguous stem any more.
-  write("notes/a.md", "# A\n\nno link now\n");
-  expect(warnings(() => refreshPaths(["notes/a.md"]))).toEqual([]);
+  const { integrity } = vaultConventions();
+  const dupe = integrity.duplicateStems.find((d) => d.stem === "README");
+  expect(dupe).toBeDefined();
+  expect(dupe!.paths).toEqual(["README.md", "archive/README.md", "leads/README.md", "leads/brands/README.md"]);
+  // Names the note to edit — the signal the log line carried, kept.
+  expect(dupe!.linkedFrom).toBe("notes/a.md");
+  expect(integrity.duplicateStemWarning).toContain("notes/a.md");
+  expect(integrity.duplicateStemWarning).toContain("resolves to README.md");
+});
 
-  // Reintroduce it — the earlier report must not suppress the new one.
-  write("notes/a.md", "# A\n\nsee [[GUIDE]] again\n");
-  expect(warnings(() => refreshPaths(["notes/a.md"]))).toHaveLength(1);
+test("a collision no wikilink reaches is listed but not flagged", () => {
+  fourWay("OVERVIEW");
+  write("notes/a.md", "# A\n\nno wikilinks here\n");
+  rebuildIndex();
+
+  const { integrity } = vaultConventions();
+  // Still visible — the report is the full picture.
+  expect(integrity.duplicateStems.find((d) => d.stem === "OVERVIEW")).toBeDefined();
+  expect(integrity.duplicateStems.find((d) => d.stem === "OVERVIEW")!.linkedFrom).toBeUndefined();
+  // But no warning: nothing resolves to the wrong note, so there is nothing to act on.
+  expect(integrity.duplicateStemWarning).toBeUndefined();
 });

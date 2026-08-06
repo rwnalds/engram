@@ -46,18 +46,6 @@ let state: IndexState | null = null;
 let watcher: FSWatcher | null = null;
 let watchedDir = "";
 
-/**
- * Ambiguous stems already reported, and the vault they belong to.
- *
- * `recomputeLinks` runs on every write, every watcher flush and every full rebuild, so anything
- * warned unconditionally from it reprints for as long as the vault keeps the collision — which is
- * forever, because no reindex resolves a naming collision. Remembering what was already said turns
- * the warning from level-triggered to edge-triggered: it fires when a collision appears, and stays
- * quiet afterwards. Resolved stems are dropped from the set, so a collision reintroduced later is
- * reported again.
- */
-let warnedStems = { dir: "", stems: new Set<string>() };
-
 function newIndex(): MiniSearch<IndexDoc> {
   return new MiniSearch<IndexDoc>({
     fields: ["title", "aliases", "tags", "body", "folder", "type"],
@@ -126,28 +114,11 @@ function recomputeLinks(s: IndexState): void {
       s.duplicateStems.set(slug, dupes);
     }
   }
-  // Only warn when something actually links the ambiguous stem: two notes sharing a filename
-  // nothing references is harmless (every vault has a few READMEs). Name a note that links it,
-  // so the warning points at the file to edit instead of just asserting a collision exists.
-  // The full set stays in s.duplicateStems for the integrity report either way.
-  const linkedFrom = new Map<string, string>();
-  for (const [src, stems] of s.linksBySource) {
-    for (const stem of stems) if (!linkedFrom.has(stem)) linkedFrom.set(stem, src);
-  }
-  if (warnedStems.dir !== s.dir) warnedStems = { dir: s.dir, stems: new Set() };
-  const ambiguous = new Set<string>();
-  for (const [slug, paths] of s.duplicateStems) {
-    const src = linkedFrom.get(slug);
-    if (src === undefined) continue;
-    ambiguous.add(slug);
-    if (warnedStems.stems.has(slug)) continue; // already reported — see warnedStems
-    const [winner, ...shadowed] = paths;
-    console.warn(
-      `[vault] duplicate stem "${slug}" — [[${slug}]] (linked from ${src}) resolves to ${winner}, ` +
-        `shadowing ${shadowed.join(", ")}.`,
-    );
-  }
-  warnedStems.stems = ambiguous;
+  // A stem collision is a property of the vault's layout, not an event, so it is reported by
+  // `vaultConventions().integrity` — queryable on demand via brain_schema and the dashboard —
+  // and deliberately not logged. Console output is the wrong channel for standing state: it
+  // cannot be dismissed or acted on where it appears, and printing from here (which runs on
+  // every write, flush and rebuild) is what buried the deploy log in the first place.
 
   s.outEdges = new Map();
   s.inEdges = new Map();
@@ -515,6 +486,22 @@ export function vaultConventions() {
     else if (n.validUntil != null && n.validUntil < now) expired++;
   }
 
+  // Which ambiguous stems a wikilink actually reaches. Computed here, on demand, rather than in
+  // recomputeLinks: that runs on every write and this is read only when someone asks for the
+  // report. `linkedFrom` names one note holding such a link, so the finding points at a file to
+  // edit instead of only asserting that a collision exists somewhere.
+  const linkedFrom = new Map<string, string>();
+  for (const [src, stems] of s.linksBySource) {
+    for (const stem of stems) if (!linkedFrom.has(stem)) linkedFrom.set(stem, src);
+  }
+  const duplicateStems = [...s.duplicateStems.entries()].map(([stem, paths]) => {
+    const from = linkedFrom.get(stem);
+    return from === undefined ? { stem, paths } : { stem, paths, linkedFrom: from };
+  });
+  const misresolving = duplicateStems.filter(
+    (d): d is { stem: string; paths: string[]; linkedFrom: string } => "linkedFrom" in d,
+  );
+
   return {
     noteCount: s.notes.size,
     archivedCount: archived,
@@ -527,11 +514,22 @@ export function vaultConventions() {
       .map(([status, count]) => ({ status, count })),
     ranking: authorityRules(),
     integrity: {
-      duplicateStems: [...s.duplicateStems.entries()].map(([stem, paths]) => ({ stem, paths })),
+      duplicateStems,
       malformedFrontmatter: malformed,
       unrecognizedStatus: unknownStatus,
-      ...(s.duplicateStems.size > 0
-        ? { duplicateStemWarning: "Wikilinks to a duplicated stem resolve to the first path only. Rename one." }
+      // Only flag collisions a link actually hits. Two notes sharing a filename nothing
+      // references changes no resolution — every vault has a few READMEs — so warning about
+      // those buries the one collision that is silently sending a wikilink to the wrong note.
+      ...(misresolving.length > 0
+        ? {
+            duplicateStemWarning:
+              `Wikilinks to a duplicated stem resolve to the first path only. ` +
+              misresolving
+                .map((d) => `[[${d.stem}]] (linked from ${d.linkedFrom}) resolves to ${d.paths[0]}`)
+                .join("; ") +
+              `. Rename the colliding file — a folder-qualified link like [[folder/${misresolving[0].stem}]] ` +
+              `will not help, the path is only a hint and still collapses to the bare stem.`,
+          }
         : {}),
       ...(malformed.length > 0
         ? {
