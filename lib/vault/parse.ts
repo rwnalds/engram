@@ -22,10 +22,21 @@ export function folderOf(relPath: string): string {
   return seg.length > 1 ? seg[0] : "root";
 }
 
-/** Resolve a wikilink target to a bare filename stem (path portion is a hint only). */
+/**
+ * Resolve a wikilink target to a bare filename stem (path portion is a hint only).
+ *
+ * Order matters. The alias goes first because an alias may itself contain a `#`
+ * (`[[Pricing#Tiers|our #1 objection]]`). Then the heading/block anchor: `[[Pricing#Tiers]]`
+ * points at a *section of* Pricing, so it must resolve to the note, not to the un-openable
+ * stem "Pricing#Tiers" — leaving it on dropped every anchored link out of the graph and every
+ * backlink it should have produced. Then `.md`, which can only be stripped once the anchor is
+ * gone (`Pricing.md#Tiers` does not end in `.md`). A pure self-anchor `[[#Tiers]]` yields "",
+ * which matches no note — correct, it addresses the current note rather than another one.
+ */
 export function stemOf(target: string): string {
-  const noAlias = target.split("|")[0].trim();
-  const base = noAlias.split("/").pop() || noAlias;
+  const noAlias = target.split("|")[0];
+  const noAnchor = noAlias.split("#")[0].trim();
+  const base = noAnchor.split("/").pop() || noAnchor;
   return base.replace(/\.md$/i, "").trim();
 }
 
