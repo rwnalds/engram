@@ -46,6 +46,18 @@ let state: IndexState | null = null;
 let watcher: FSWatcher | null = null;
 let watchedDir = "";
 
+/**
+ * Ambiguous stems already reported, and the vault they belong to.
+ *
+ * `recomputeLinks` runs on every write, every watcher flush and every full rebuild, so anything
+ * warned unconditionally from it reprints for as long as the vault keeps the collision — which is
+ * forever, because no reindex resolves a naming collision. Remembering what was already said turns
+ * the warning from level-triggered to edge-triggered: it fires when a collision appears, and stays
+ * quiet afterwards. Resolved stems are dropped from the set, so a collision reintroduced later is
+ * reported again.
+ */
+let warnedStems = { dir: "", stems: new Set<string>() };
+
 function newIndex(): MiniSearch<IndexDoc> {
   return new MiniSearch<IndexDoc>({
     fields: ["title", "aliases", "tags", "body", "folder", "type"],
@@ -114,18 +126,28 @@ function recomputeLinks(s: IndexState): void {
       s.duplicateStems.set(slug, dupes);
     }
   }
-  // Only warn when something actually links to the ambiguous stem. Two notes sharing a
-  // filename nothing references is harmless (every vault has a few READMEs), and warning
-  // unconditionally reprints on every reindex — which buries the cases that DO silently
-  // misresolve a link. The full set stays in s.duplicateStems for the integrity report.
-  const linkedStems = new Set<string>();
-  for (const stems of s.linksBySource.values()) {
-    for (const stem of stems) linkedStems.add(stem);
+  // Only warn when something actually links the ambiguous stem: two notes sharing a filename
+  // nothing references is harmless (every vault has a few READMEs). Name a note that links it,
+  // so the warning points at the file to edit instead of just asserting a collision exists.
+  // The full set stays in s.duplicateStems for the integrity report either way.
+  const linkedFrom = new Map<string, string>();
+  for (const [src, stems] of s.linksBySource) {
+    for (const stem of stems) if (!linkedFrom.has(stem)) linkedFrom.set(stem, src);
   }
+  if (warnedStems.dir !== s.dir) warnedStems = { dir: s.dir, stems: new Set() };
+  const ambiguous = new Set<string>();
   for (const [slug, paths] of s.duplicateStems) {
-    if (!linkedStems.has(slug)) continue;
-    console.warn(`[vault] duplicate stem "${slug}" (${paths.join(", ")}) — wikilinks resolve to the first.`);
+    const src = linkedFrom.get(slug);
+    if (src === undefined) continue;
+    ambiguous.add(slug);
+    if (warnedStems.stems.has(slug)) continue; // already reported — see warnedStems
+    const [winner, ...shadowed] = paths;
+    console.warn(
+      `[vault] duplicate stem "${slug}" — [[${slug}]] (linked from ${src}) resolves to ${winner}, ` +
+        `shadowing ${shadowed.join(", ")}.`,
+    );
   }
+  warnedStems.stems = ambiguous;
 
   s.outEdges = new Map();
   s.inEdges = new Map();
