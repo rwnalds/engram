@@ -197,7 +197,17 @@ VAULT_DIR=/path/to/your/obsidian-or-markdown/vault bun dev
   bun run mcp:stdio /path/to/your/vault      # defaults to ./sample-vault
   ```
 
-  Same `brain_*` tools. Image: `Dockerfile.mcp` (`CMD ["bun", "scripts/mcp-stdio.ts"]`).
+  Same `brain_*` tools. Built from `Dockerfile.mcp`.
+
+**Each mode ships as its own image, and they are not interchangeable:**
+
+| Image | Mode | Use it for |
+|---|---|---|
+| `ghcr.io/rwnalds/engram-app` | HTTP — dashboard + `/api/mcp` | **Railway, Render, Fly, any host.** This is the one you deploy. |
+| `ghcr.io/rwnalds/engram` | stdio — JSON-RPC on stdin/stdout | Claude Desktop, Cursor, MCP registries. Never opens a port. |
+
+Deploying the stdio image as a web service is the one mistake worth calling out: it can only 502,
+because there is nothing listening. It now refuses to start on a PaaS and tells you this instead.
 
 ## MCP tools
 
@@ -231,6 +241,10 @@ page — only auth/infra bootstrap vars live on the host. Full setup: **[DEPLOY.
 
 - **Railway:** New Project → *Deploy from GitHub repo* → add a Volume at `/data`.
 - **Render:** one-click via the bundled `render.yaml` (Docker + a `/data` disk).
+
+Deploying from a prebuilt image instead of the repo? Use **`ghcr.io/rwnalds/engram-app:latest`** —
+not `engram:latest`, which is the stdio server and cannot answer HTTP. Set the healthcheck to
+`/api/health`.
 
 ## FAQ
 
