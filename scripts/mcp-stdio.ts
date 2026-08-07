@@ -69,7 +69,8 @@ async function main() {
   // Local mode: never touch git, never require an Anthropic key for introspection.
   process.env.GIT_SYNC_ENABLED = "false";
 
-  const { TOOLS, TOOL_MAP } = await import("@/lib/mcp/tools");
+  const { TOOLS } = await import("@/lib/mcp/tools");
+  const { callTool } = await import("@/lib/mcp/call");
   const { VERSION } = await import("@/lib/version");
   const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
@@ -82,9 +83,10 @@ async function main() {
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const tool = TOOL_MAP.get(req.params.name);
-    if (!tool) throw new Error(`unknown tool: ${req.params.name}`);
-    const out = await tool.handler(req.params.arguments ?? {});
+    // Via callTool, so this transport validates arguments against each tool's inputSchema exactly
+    // like the HTTP route. Dispatching straight to `tool.handler` is what let a `brain_append`
+    // carrying its payload under the wrong key write a blank line and report success.
+    const out = await callTool(req.params.name, req.params.arguments ?? {});
     const text = typeof out === "string" ? out : JSON.stringify(out, null, 2);
     return { content: [{ type: "text", text }] };
   });
