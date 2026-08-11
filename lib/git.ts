@@ -1,46 +1,48 @@
 import fs from "node:fs";
 import path from "node:path";
-import { simpleGit } from "simple-git";
+import { simpleGit, type StatusResult } from "simple-git";
+import { SKIPPED, gitPausedFor, gitRead, invalidateGitReads, runGit, tryRunGit } from "@/lib/git-queue";
 import { activeVaultDir, getActive } from "@/lib/repos";
 import { gitAuthor, gitSyncEnabled } from "@/lib/settings";
 import { rebuildIndex } from "@/lib/vault/store";
 
-let timer: ReturnType<typeof setTimeout> | null = null;
-let pending: string[] = [];
-
 /**
- * A single in-flight guard shared by BOTH the write-sync (runSync) and the pull loop (pullActive),
- * so at most one git operation ever touches the vault repo at a time. Two concurrent git ops on one
- * repo mean index.lock contention and half-finished rebases; worse, under load the piled-up child
- * processes exhaust the container's fork()/thread budget, which makes libuv abort the whole process
- * (the SIGABRT + "getaddrinfo() thread failed to start" crash loop). Serializing pins the live git
- * subprocess count at one. If the lock is held, the caller skips (pull loop) or reschedules
- * (write-sync) instead of stacking more work on top.
+ * The debounce queue and the pull loop, on `globalThis` for the same reason the git queue is
+ * (see lib/git-queue.ts): this module is compiled into several server chunks, so a plain `let`
+ * gives the instrumentation entry and each group of API routes a copy of its own. Several
+ * `pending` arrays and several 2.5s debounce timers meant a note write and a folder write in the
+ * same window each started their own commit → pull → push cycle against one clone. Sharing the
+ * state is what makes the single-writer guarantee hold across route boundaries.
  */
-let gitBusy = false;
-
-/**
- * Returned when the lock was held and `fn` never ran.
- *
- * A Symbol, not `undefined`: the original guard returned `undefined` for "skipped", but a callback
- * typed `Promise<void>` also resolves to `undefined`, so "we skipped" and "we ran and finished"
- * were the same value. `runSync` therefore treated EVERY successful sync as a skip — it re-queued
- * its reasons and rescheduled itself, forever. The vault's git history shows it plainly: on
- * 2026-08-06 the commit subjects grew `1 change(s)` → `2` → `3` → `4` → `5`, each repeating every
- * earlier reason, because `pending` never drained. A sentinel that cannot be produced by `fn`
- * makes the two cases impossible to confuse.
- */
-const SKIPPED = Symbol("git-busy");
-
-async function withGitLock<T>(fn: () => Promise<T>): Promise<T | typeof SKIPPED> {
-  if (gitBusy) return SKIPPED;
-  gitBusy = true;
-  try {
-    return await fn();
-  } finally {
-    gitBusy = false;
-  }
+interface SyncState {
+  timer: ReturnType<typeof setTimeout> | null;
+  pending: string[];
+  /** The last thing that went wrong in a sync, surfaced by syncStatus() instead of only console. */
+  lastError?: string;
+  pullTimer: ReturnType<typeof setTimeout> | null;
+  /** Consecutive pull failures — drives the loop's exponential backoff. */
+  pullFailures: number;
 }
+
+const SYNC_KEY = Symbol.for("engram.git.sync");
+type GlobalWithSync = typeof globalThis & { [SYNC_KEY]?: SyncState };
+
+function syncState(): SyncState {
+  const g = globalThis as GlobalWithSync;
+  return (g[SYNC_KEY] ??= { timer: null, pending: [], pullTimer: null, pullFailures: 0 });
+}
+
+/**
+ * How long a `syncStatus()` / `vaultActivity()` answer may be reused.
+ *
+ * These are the polled endpoints: the sidebar's workspace switcher refreshes `/api/sync` every
+ * 10s and the dashboard refreshes `/api/activity` every 15s, per open tab. `syncStatus` alone was
+ * two git children (`status` + `stash list`) every time, none of them serialized against the pull
+ * and push that actually matter. Answers this fresh are indistinguishable to the reader and cost
+ * one git process instead of one per tab. Any sync we run ourselves clears the cache immediately.
+ */
+const STATUS_TTL_MS = 4_000;
+const ACTIVITY_TTL_MS = 8_000;
 
 /**
  * The vault dir ONLY when it's safe to run git there: it must be its OWN repo root (a `.git`
@@ -92,11 +94,51 @@ function gitEnv(name: string, email: string): Record<string, string> {
 /**
  * A git client for the vault with the sanitised environment already applied — to EVERY command,
  * not just the commit. Pull and push spawn child processes through the same guard, so an
- * inherited `GIT_ASKPASS` broke them exactly as it broke commits.
+ * inherited `GIT_ASKPASS` broke them exactly as it broke commits. The read-only paths below use
+ * this client too: `GIT_DIR` or `GIT_WORK_TREE` inherited from the host would point `log` and
+ * `show` at some other repository and quietly serve its history as the vault's.
  */
 function vaultGit(dir: string) {
   const { name, email } = gitAuthor();
-  return simpleGit(dir).env(gitEnv(name, email));
+  return simpleGit(dir, {
+    // The queue in lib/git-queue.ts already guarantees one git child at a time; this shuts the
+    // door simple-git leaves open by default (five), so no single client can widen it again.
+    maxConcurrentProcesses: 1,
+    // Kill a command that has printed nothing for two minutes rather than let it hold the queue
+    // — and its git / git-remote-https / resolver threads — indefinitely. A vault is markdown:
+    // two minutes of silence means the network is wedged, and wedged children that never exit
+    // are how the container ran out of processes to fork in the first place.
+    timeout: { block: 120_000 },
+  }).env(gitEnv(name, email));
+}
+
+/**
+ * The `<remote> <branch>` a pull names explicitly, or null when HEAD is detached.
+ *
+ * This is NOT what fixes "Cannot rebase onto multiple branches." — that error comes from two
+ * fetches racing on `.git/FETCH_HEAD`, and it reproduces just as reliably with an explicit
+ * refspec as without one (40/40 rounds either way against a local remote). Only serializing git
+ * prevents it; see lib/git-queue.ts.
+ *
+ * Naming the refspec buys two smaller things. A bare `git pull --rebase` needs the current branch
+ * to have tracking config, which a self-hosted VAULT_DIR repo (see gitVaultDir) may not have —
+ * that fails with "There is no tracking information for the current branch", where falling back
+ * to `origin/<current>` just works. And a detached HEAD gets a message naming the vault instead
+ * of git's generic "You are not currently on a branch".
+ */
+function upstreamOf(status: StatusResult): { remote: string; branch: string } | null {
+  if (status.detached || !status.current) return null;
+  const slash = status.tracking?.indexOf("/") ?? -1;
+  if (status.tracking && slash > 0) {
+    // Only the FIRST slash separates them — `origin/feature/x` is remote `origin`, branch `feature/x`.
+    return { remote: status.tracking.slice(0, slash), branch: status.tracking.slice(slash + 1) };
+  }
+  return { remote: "origin", branch: status.current };
+}
+
+async function pullRebase(g: ReturnType<typeof vaultGit>, up: ReturnType<typeof upstreamOf>): Promise<void> {
+  if (!up) throw new Error("vault HEAD is detached — refusing to pull; check out a branch in the vault clone first");
+  await g.pull(["--rebase", up.remote, up.branch]);
 }
 
 /**
@@ -105,9 +147,10 @@ function vaultGit(dir: string) {
  */
 export function requestSync(reason: string): void {
   if (!gitSyncEnabled() || !gitVaultDir()) return;
-  pending.push(reason);
-  if (timer) clearTimeout(timer);
-  timer = setTimeout(runSync, 2500);
+  const s = syncState();
+  s.pending.push(reason);
+  if (s.timer) clearTimeout(s.timer);
+  s.timer = setTimeout(runSync, 2500);
 }
 
 export interface SyncOutcome {
@@ -119,8 +162,6 @@ export interface SyncOutcome {
   error?: string;
 }
 
-/** The last thing that went wrong in a sync, surfaced by syncStatus() instead of only console. */
-let lastSyncError: string | undefined;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -171,7 +212,7 @@ async function syncOnce(reasons: string[]): Promise<SyncOutcome> {
     // gap, `git pull --rebase` refuses on a dirty tree, which loses nothing; the next tick retries.
     const before = await g.revparse(["HEAD"]).catch(() => "");
     try {
-      await g.pull(["--rebase"]);
+      await pullRebase(g, upstreamOf(status)); // committing does not move the branch or its upstream
       out.pulled = true;
       const after = await g.revparse(["HEAD"]).catch(() => "");
       // A rebase that replayed our commit over remote work rewrote the tree; the index must
@@ -205,66 +246,80 @@ async function syncOnce(reasons: string[]): Promise<SyncOutcome> {
 }
 
 async function runSync(): Promise<void> {
-  const reasons = pending;
-  pending = [];
-  const outcome = await withGitLock(() => syncOnce(reasons));
+  const s = syncState();
+  const reasons = s.pending;
+  s.pending = [];
+  s.timer = null; // this timer has fired; anything scheduled during the await is a new one
+  const outcome = await tryRunGit(() => syncOnce(reasons));
   if (outcome === SKIPPED) {
-    // The lock was held by a pull. The changed files are still dirty on disk, so don't drop them:
+    // Git was busy with a pull. The changed files are still dirty on disk, so don't drop them:
     // re-queue the reasons and retry once the repo is free.
-    pending.unshift(...reasons);
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(runSync, 2500);
+    s.pending.unshift(...reasons);
+    if (s.timer) clearTimeout(s.timer);
+    s.timer = setTimeout(runSync, 2500);
     return;
   }
-  lastSyncError = outcome.error;
+  s.lastError = outcome.error;
+  invalidateGitReads();
 }
 
 /** Run the debounced sync immediately. Returns SKIPPED-as-null when a pull holds the repo. */
 export async function syncNow(reason = "manual sync"): Promise<SyncOutcome | null> {
   if (!gitSyncEnabled() || !gitVaultDir()) return null;
-  const reasons = pending.length > 0 ? pending : [reason];
-  pending = [];
-  if (timer) clearTimeout(timer);
-  timer = null;
-  const outcome = await withGitLock(() => syncOnce(reasons));
+  const s = syncState();
+  const reasons = s.pending.length > 0 ? s.pending : [reason];
+  s.pending = [];
+  if (s.timer) clearTimeout(s.timer);
+  s.timer = null;
+  const outcome = await tryRunGit(() => syncOnce(reasons));
   if (outcome === SKIPPED) {
-    pending.unshift(...reasons);
+    s.pending.unshift(...reasons);
     return null;
   }
-  lastSyncError = outcome.error;
+  s.lastError = outcome.error;
+  invalidateGitReads();
   return outcome;
 }
 
 /** Test seam: the reasons still waiting to be committed. */
 export function pendingReasons(): string[] {
-  return [...pending];
+  return [...syncState().pending];
 }
 
 export async function syncStatus() {
   const dir = gitVaultDir();
   if (!dir || !gitSyncEnabled()) return { enabled: false as const };
+  const s = syncState();
+  // Surfaced rather than hidden behind a generic error: when the breaker is open the dashboard's
+  // "sync error" dot is telling the truth, but only this says the vault is fine and git is paused.
+  const pausedMs = gitPausedFor();
+  const paused = pausedMs > 0 ? { paused: Math.ceil(pausedMs / 1000) } : {};
   try {
-    const g = vaultGit(dir);
-    const s = await g.status();
-    // Stash entries are reported because nothing in Engram creates one any more. Any that exist
-    // are vault content the old `--autostash` pull stranded — recoverable with `git stash list`
-    // / `git stash pop`, but invisible until someone is told it is there.
-    const stashed = await g
-      .stashList()
-      .then((l) => l.total)
-      .catch(() => 0);
+    const { st, stashed } = await gitRead(`status:${dir}`, STATUS_TTL_MS, async () => {
+      const g = vaultGit(dir);
+      const st = await g.status();
+      // Stash entries are reported because nothing in Engram creates one any more. Any that exist
+      // are vault content the old `--autostash` pull stranded — recoverable with `git stash list`
+      // / `git stash pop`, but invisible until someone is told it is there.
+      const stashed = await g
+        .stashList()
+        .then((l) => l.total)
+        .catch(() => 0);
+      return { st, stashed };
+    });
     return {
       enabled: true as const,
-      dirty: s.files.length,
-      ahead: s.ahead,
-      behind: s.behind,
-      branch: s.current,
-      pending: pending.length,
+      dirty: st.files.length,
+      ahead: st.ahead,
+      behind: st.behind,
+      branch: st.current,
+      pending: s.pending.length,
       ...(stashed > 0 ? { stashed } : {}),
-      ...(lastSyncError ? { lastError: lastSyncError } : {}),
+      ...paused,
+      ...(s.lastError ? { lastError: s.lastError } : {}),
     };
   } catch {
-    return { enabled: true as const, error: true };
+    return { enabled: true as const, error: true, ...paused };
   }
 }
 
@@ -287,7 +342,7 @@ export interface PullResult {
 export async function pullActive(): Promise<PullResult> {
   const active = getActive();
   if (!active) return { ok: true, changed: false };
-  const result = await withGitLock(async (): Promise<PullResult> => {
+  const result = await tryRunGit(async (): Promise<PullResult> => {
     const dir = activeVaultDir();
     try {
       const g = vaultGit(dir);
@@ -303,7 +358,8 @@ export async function pullActive(): Promise<PullResult> {
       // the note is reverted, the writes live only in a stash nobody reads, and every caller was
       // already told `ok: true`. Committing first (below) is strictly better than stashing: the
       // content is in history either way, and a commit is a place people look.
-      const dirty = (await g.status()).files.length > 0;
+      const status = await g.status();
+      const dirty = status.files.length > 0;
       if (dirty) {
         if (gitSyncEnabled()) {
           // The write-sync commits, then pulls, then pushes. Let it own this cycle.
@@ -318,7 +374,7 @@ export async function pullActive(): Promise<PullResult> {
       }
 
       const before = await g.revparse(["HEAD"]).catch(() => "");
-      await g.pull(["--rebase"]); // pull already fetches — a separate g.fetch() only doubles the child processes
+      await pullRebase(g, upstreamOf(status)); // pull already fetches — a separate g.fetch() only doubles the child processes
       const after = await g.revparse(["HEAD"]).catch(() => "");
       const changed = before !== after;
       if (changed) rebuildIndex();
@@ -336,7 +392,9 @@ export async function pullActive(): Promise<PullResult> {
     }
   });
   // SKIPPED = a sync was already in flight; a skipped tick is not an error.
-  return result === SKIPPED ? { ok: true, changed: false } : result;
+  if (result === SKIPPED) return { ok: true, changed: false };
+  invalidateGitReads();
+  return result;
 }
 
 export interface ActivityEntry {
@@ -356,7 +414,7 @@ export async function vaultActivity(maxCount = 50): Promise<ActivityEntry[]> {
   const dir = gitVaultDir();
   if (!dir) return [];
   try {
-    const log = await simpleGit(dir).log({ maxCount });
+    const log = await gitRead(`activity:${dir}:${maxCount}`, ACTIVITY_TTL_MS, () => vaultGit(dir).log({ maxCount }));
     return log.all.map((c) => ({
       hash: c.hash.slice(0, 7),
       message: c.message,
@@ -440,11 +498,17 @@ export async function commitChanges(hash: string): Promise<CommitDetail | null> 
   if (!dir) return null;
   if (!/^[0-9a-f]{4,40}$/i.test(hash)) return null; // avoid passing arbitrary args to git
   try {
-    const g = simpleGit(dir);
-    const meta = await g.raw(["show", "-s", "--no-color", "--format=%h%x1f%an%x1f%aI%x1f%s", hash]);
+    // All three `show`s in one queue slot: they describe a single commit, so interleaving another
+    // caller's pull between them would be three git children racing a rebase for no benefit.
+    const { meta, nameStatus, rawDiff } = await runGit(async () => {
+      const g = vaultGit(dir);
+      return {
+        meta: await g.raw(["show", "-s", "--no-color", "--format=%h%x1f%an%x1f%aI%x1f%s", hash]),
+        nameStatus: await g.raw(["show", "--no-color", "--format=", "--name-status", hash]),
+        rawDiff: await g.raw(["show", "--no-color", "--format=", "--patch", hash]),
+      };
+    });
     const [shortHash, author, date, message] = meta.trim().split("\x1f");
-    const nameStatus = await g.raw(["show", "--no-color", "--format=", "--name-status", hash]);
-    const rawDiff = await g.raw(["show", "--no-color", "--format=", "--patch", hash]);
     const truncated = rawDiff.length > MAX_DIFF;
     const blocks = splitDiffByFile(truncated ? rawDiff.slice(0, MAX_DIFF) : rawDiff);
 
@@ -465,23 +529,25 @@ export async function commitChanges(hash: string): Promise<CommitDetail | null> 
   }
 }
 
-let pullTimer: ReturnType<typeof setTimeout> | null = null;
 /**
  * Poll the remote for the active vault so the brain stays fresh without a redeploy. Self-reschedules
  * instead of using setInterval: the next tick is queued only after the current pull settles, so a
  * slow pull can never overlap the next one. On failure it backs off exponentially (30s healthy →
  * capped ~16min) so a network/DNS blip can't become a tight retry loop that spawns git processes
  * faster than they exit — the pile-up that aborted the process.
+ *
+ * The timer and the failure count live in the shared state, so the loop stays single even though
+ * this module exists three times over in the server build.
  */
 export function startPullLoop(baseMs = 30_000): void {
-  if (pullTimer) return;
-  let failures = 0;
+  const s = syncState();
+  if (s.pullTimer) return;
   const tick = async () => {
     const res = await pullActive().catch(() => ({ ok: false as const }));
-    failures = res.ok ? 0 : Math.min(failures + 1, 5);
-    pullTimer = setTimeout(tick, baseMs * 2 ** failures);
-    pullTimer.unref?.();
+    s.pullFailures = res.ok ? 0 : Math.min(s.pullFailures + 1, 5);
+    s.pullTimer = setTimeout(tick, baseMs * 2 ** s.pullFailures);
+    s.pullTimer.unref?.();
   };
-  pullTimer = setTimeout(tick, baseMs);
-  pullTimer.unref?.();
+  s.pullTimer = setTimeout(tick, baseMs);
+  s.pullTimer.unref?.();
 }

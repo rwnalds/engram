@@ -4,6 +4,10 @@ import path from "node:path";
 import { simpleGit } from "simple-git";
 import { DATA_ROOT, VAULT_DIR } from "@/lib/config";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+// The clones go through the same queue as every other git command (see lib/git-queue.ts). A clone
+// is the heaviest git operation there is, and the boot path runs one at the moment Next.js is at
+// peak memory — exactly when an unserialized second git process is what tips the container over.
+import { runGit } from "@/lib/git-queue";
 
 const REPOS_FILE = path.join(DATA_ROOT, "repos.json");
 const VAULTS_DIR = path.join(DATA_ROOT, "vaults");
@@ -90,7 +94,7 @@ export async function addRepo(opts: {
 
   const dir = vaultDirFor(id);
   fs.rmSync(dir, { recursive: true, force: true });
-  await simpleGit().clone(authedUrl(opts.url, opts.token), dir);
+  await runGit(() => simpleGit().clone(authedUrl(opts.url, opts.token), dir));
 
   const rec: StoredRepo = {
     id,
@@ -142,7 +146,7 @@ export async function ensureActiveCloned(): Promise<void> {
   if (fs.existsSync(path.join(dir, ".git"))) return;
   try {
     fs.rmSync(dir, { recursive: true, force: true });
-    await simpleGit().clone(authedUrl(a.url, a.tokenEnc ? decryptSecret(a.tokenEnc) : undefined), dir);
+    await runGit(() => simpleGit().clone(authedUrl(a.url, a.tokenEnc ? decryptSecret(a.tokenEnc) : undefined), dir));
   } catch (e) {
     console.error("[repos] re-clone failed", e);
   }
