@@ -251,6 +251,41 @@ describe("a pull never rebases over uncommitted vault writes", () => {
   });
 });
 
+describe("one writer, across every copy of this module", () => {
+  /**
+   * Next.js compiles lib/git.ts into three server chunks — the instrumentation entry that owns the
+   * pull loop, the shared API-route chunk, and /api/folders. Module-level `let pending` / `let
+   * timer` therefore gave each of them its own debounce queue, so a note write and a folder write
+   * in the same 2.5s window each started their own commit → pull → push against one clone. Two
+   * concurrent `git pull --rebase` on one repo is what produced "Cannot rebase onto multiple
+   * branches." in the Railway log (reproduced 40/40; see lib/git-queue.test.ts). Holding the state
+   * on globalThis is what makes the three copies one writer.
+   */
+  test("the debounce queue is shared process state, not module state", async () => {
+    requestSync("Agent Yang: append delivery.md");
+    const shared = (globalThis as Record<symbol, { pending: string[] } | undefined>)[Symbol.for("engram.git.sync")];
+    expect(shared?.pending).toContain("Agent Yang: append delivery.md");
+    expect(pendingReasons()).toEqual(shared!.pending);
+    await syncNow(); // drain, so the 2.5s timer can't fire into a later test
+    expect(pendingReasons()).toEqual([]);
+  });
+
+  test("overlapping pulls and syncs never race into 'Cannot rebase onto multiple branches'", async () => {
+    fs.appendFileSync(path.join(VAULT, NOTE), "- **2026-08-07** — concurrent-callers entry.\n");
+    const results = await Promise.all([pullActive(), syncNow(), pullActive(), syncNow(), pullActive()]);
+
+    for (const r of results) {
+      expect(r?.error ?? "").not.toMatch(/multiple branches/);
+    }
+    // Whoever won the queue, the write is committed and the repo is left on its branch, not
+    // half-rebased. The losers skipped rather than piling a second git process onto the first.
+    expect(onDisk()).toContain("concurrent-callers entry.");
+    const status = await vaultGit().status();
+    expect(status.current).toBe(BRANCH);
+    expect(status.conflicted).toEqual([]);
+  });
+});
+
 describe("sync failures are reportable, not just console noise", () => {
   test("syncStatus surfaces a stranded stash so old autostash losses can be recovered", async () => {
     await syncNow();
