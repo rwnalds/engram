@@ -1,0 +1,25 @@
+# What `railway up` must not upload. Everything here is also in .dockerignore; this file exists
+# because .dockerignore is applied by the builder, after the CLI has already sent the bytes.
+#
+# assets/ is README media (a 21 MB demo.mp4 and an 11 MB demo.gif) rendered by GitHub, never by the
+# app — there is no public/ dir and no code path references it. It was 32 MB of a 35 MB upload, and
+# large uploads were failing mid-flight on this link ("received fatal alert: BadRecordMac", then
+# "Broken pipe"), which blocked deploying at all. Nothing in the image needs it.
+assets
+
+node_modules
+.next
+.git
+.env
+.env.*
+*.log
+.DS_Store
+.notes
+dist
+out
+coverage
+
+# Test fixtures, written into the repo root by `bun test` (see test/setup.ts).
+.test-vault
+.test-data
+tsconfig.tsbuildinfo

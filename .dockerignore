@@ -9,3 +9,12 @@ node_modules
 dist
 out
 coverage
+
+# README media (32 MB of demo.mp4/demo.gif) rendered by GitHub, never by the app — there is no
+# public/ dir and no code path references it. Keep it out of the build context and the image.
+assets
+
+# Test fixtures, written into the repo root by `bun test` (see test/setup.ts).
+.test-vault
+.test-data
+tsconfig.tsbuildinfo
