@@ -3,11 +3,15 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "bun run start"
+# No startCommand on purpose. The image is ENTRYPOINT ["/usr/bin/tini","--"] + CMD ["bun","run","start"],
+# and tini as PID 1 is what reaps the orphaned git helpers (see Dockerfile). A platform start command
+# is the one thing that can quietly displace that, so the image owns how the server is launched.
 healthcheckPath = "/api/health"
 healthcheckTimeout = 100
 restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 5
+# 5 was too few: once the PID budget filled, every restart re-crashed within the same minute, the
+# budget was exhausted, and Railway gave up — turning a self-healing crash into hours of hard downtime.
+restartPolicyMaxRetries = 10
 
 # Deploy this repo (the app). Mount a volume at /data and set ENGRAM_DATA_DIR=/data;
 # app state + vault clones live there. Vault repos are connected in the dashboard
