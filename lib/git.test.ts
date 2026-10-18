@@ -1,7 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { simpleGit } from "simple-git";
+
+// Windows process creation is significantly slower than Linux; give git-intensive tests 20s.
+setDefaultTimeout(20_000);
 
 /**
  * The vault-sync durability tests.

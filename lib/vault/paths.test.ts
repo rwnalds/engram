@@ -10,7 +10,7 @@ import { resolveInVault, tryResolveInVault } from "./paths";
  * could, including /proc/self/environ. These pin the guard that closed it.
  */
 
-const VAULT = "/srv/vault";
+const VAULT = path.resolve("/srv/vault");
 
 describe("resolveInVault", () => {
   test("resolves an ordinary note", () => {

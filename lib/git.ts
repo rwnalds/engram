@@ -109,6 +109,15 @@ function vaultGit(dir: string) {
     // two minutes of silence means the network is wedged, and wedged children that never exit
     // are how the container ran out of processes to fork in the first place.
     timeout: { block: 120_000 },
+    // simple-git v4 blocks guarded env vars passed via .env() unless explicitly allowlisted.
+    // Allowlist only the exact variables Engram sets in gitEnv().
+    allowEnvironment: [
+      "GIT_AUTHOR_NAME",
+      "GIT_AUTHOR_EMAIL",
+      "GIT_COMMITTER_NAME",
+      "GIT_COMMITTER_EMAIL",
+      "GIT_TERMINAL_PROMPT",
+    ],
   }).env(gitEnv(name, email));
 }
 
